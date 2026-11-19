@@ -5,8 +5,8 @@
  * O banco, as permissões e a Edge Function permanecem no Supabase.
  */
 const ROTAS_CONFIG = Object.freeze({
-  supabaseUrl: "",
-  supabasePublishableKey: ""
+  supabaseUrl: "https://nopuzcrkrserlppxhcop.supabase.co",
+  supabasePublishableKey: "sb_publishable_D2p0OxJxt9UhT4E1WLYWpg_vbCHqdEr"
 });
 
 (function () {
