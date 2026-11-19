@@ -118,7 +118,7 @@ async function createBackend(url, publicKey) {
           created++;
         }
       }
-      const result = await rpc(action, { year: data.year, routeIds: data.routeIds });
+      const result = await rpc(action, { year: data.year, routeIds: data.routeIds, schoolIds: data.schoolIds });
       result.counts.usersCreated = created;
       return result;
     }
@@ -650,27 +650,33 @@ function studentImportForm(m) {
 function monitorSetupDialog(m){
   if(!m.plan)return `<p role="status">${E(m.error||'Consultando as rotas e os acessos…')}</p>${m.error?'<button class="btn" type="button" data-act="monitorSetup">Tentar novamente</button>':''}`;
   const routes=a('routes').filter(isActive);
+  const schools=a('schools').filter(isActive);
   return `<form id="modalForm" data-form="monitorSetup">
-    <p class="tip">Confira as duas rotas. As monitoras usarão as contas de e-mail já cadastradas. Leticia e Carla terão acessos individuais na mesma rota.</p>
+    <p class="tip">Os bairros serão reunidos em duas rotas, com os pontos de embarque como referência. Confira as rotas existentes ou escolha as escolas atendidas para criar uma rota que ainda não existe.</p>
     ${m.plan.groups.map(group=>`<fieldset class="monitor-setup-group"><legend>${E(group.nome)} · ${group.stops.length} pontos</legend>
-      ${selectField('route_'+group.key,'Rota cadastrada',routes,m.routeIds[group.key],'Selecione a rota correspondente','required')}
+      <p><strong>Bairros reunidos:</strong> ${E((group.bairros||[]).join(', '))}</p>
+      ${selectField('route_'+group.key,'Rota cadastrada',routes,m.routeIds[group.key],'Criar a rota '+group.nome)}
+      <fieldset class="assignment-field route-school-field"><legend>Escolas atendidas</legend>
+        <div class="select-list">${schools.map(school=>`<label class="check-row"><input type="checkbox" name="schools_${E(group.key)}" value="${E(school.id)}" ${(m.schoolIds?.[group.key]||[]).includes(school.id)?'checked':''}><span>${E(school.nome)}</span></label>`).join('')||'<p class="assignment-empty">Cadastre uma escola ativa na seção Escolas para criar esta rota.</p>'}</div>
+      </fieldset>
       ${group.monitors.map(monitor=>`<div class="monitor-setup-account"><strong>${E(monitor.nome)}</strong><p>E-mail: <b>${E(monitor.email)}</b></p>
         ${monitor.exists?'<p>Conta vinculada. A senha atual será mantida.</p>':'<p>O perfil será vinculado à conta já criada no Authentication do Supabase.</p>'}
       </div>`).join('')}
       <details><summary>Conferir os pontos na ordem do arquivo</summary><ol>${group.stops.map(name=>`<li>${E(name)}</li>`).join('')}</ol></details>
     </fieldset>`).join('')}
-    <p class="tip">Os pontos serão cadastrados ou atualizados na ordem exibida. Pontos já existentes manterão os vínculos com os estudantes. As novas contas exigirão troca de senha no primeiro acesso.</p>
+    <p class="tip">As escolas já atendidas, os estudantes, os crachás e os históricos serão preservados. Os pontos existentes manterão seus vínculos. Cada monitora usará seu e-mail e a senha já cadastrada.</p>
     ${modalActions(false,'Salvar acessos e pontos')}
   </form>`;
 }
 async function openMonitorSetup(){
   if(role()!=='secretaria'||S.year!=='2026')return;
-  const m={type:'monitorSetup',year:S.year,routeIds:{}};
+  const m={type:'monitorSetup',year:S.year,routeIds:{},schoolIds:{}};
   S.modal=m;render();
   try{
     const plan=await api('monitorSetupPreview',{year:m.year});
     if(S.modal!==m)return;
     m.plan=plan;m.routeIds=Object.fromEntries(plan.groups.map(group=>[group.key,group.routeId]));
+    m.schoolIds=Object.fromEntries(plan.groups.map(group=>[group.key,group.schoolIds||find('routes',group.routeId)?.escolaIds||[]]));
   }catch(error){if(S.modal!==m)return;m.error=error.message;warn(error);}
   if(S.modal===m){render();$('modalTitle')?.focus();}
 }
@@ -1346,7 +1352,11 @@ async function handleSubmit(e){const form=e.target;e.preventDefault();
   }
   if(what==='monitorSetup'){
     m.routeIds=Object.fromEntries(m.plan.groups.map(group=>[group.key,x['route_'+group.key]]));
-    await mutate('setupMonitors',{year:m.year,routeIds:m.routeIds},'Acessos e pontos configurados: Elenice em Leites; Leticia e Carla em Simão.');
+    m.schoolIds=Object.fromEntries(m.plan.groups.map(group=>[group.key,new FormData(form).getAll('schools_'+group.key)]));
+    const missing=m.plan.groups.find(group=>!m.routeIds[group.key]&&!m.schoolIds[group.key].length);
+    if(missing){message('Selecione as escolas atendidas pela rota '+missing.nome+'.',true);return;}
+    const result=await mutate('setupMonitors',{year:m.year,routeIds:m.routeIds,schoolIds:m.schoolIds},'Rotas e pontos configurados: Elenice em Leites; Leticia e Carla em Simão.');
+    if(result?.warnings?.length)message(result.warnings.join(' '),true);
     return;
   }
   if(what==='scannerCode'){
