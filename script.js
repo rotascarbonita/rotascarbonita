@@ -17,18 +17,12 @@ const ROTAS_CONFIG = Object.freeze({
 // ============================================================================
 function createClient(...args) { return RotasSupabase.createClient(...args); }
 
-function loginEmail(login) {
-  const value = String(login || '').trim().toLowerCase();
-  // Contas criadas no Supabase Auth entram com o próprio e-mail.
-  if (value.includes('@')) {
-    if (value.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
-      throw Error('Informe um e-mail válido cadastrado no Supabase.');
-    }
-    return value;
+function loginEmail(email) {
+  const value = String(email || '').trim().toLowerCase();
+  if (value.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) || /@acesso\.rotas\.invalid$/.test(value)) {
+    throw Error('Informe seu e-mail válido cadastrado para acessar o sistema.');
   }
-  // Mantém a compatibilidade com os logins individuais do sistema anterior.
-  if (!/^[a-z0-9][a-z0-9._-]{2,79}$/.test(value)) throw Error('Informe seu e-mail cadastrado no Supabase ou o login individual fornecido pela Secretaria.');
-  return `${value}@acesso.rotas.invalid`;
+  return value;
 }
 
 async function createBackend(url, publicKey) {
@@ -36,10 +30,17 @@ async function createBackend(url, publicKey) {
     auth: { storage: window.sessionStorage, storageKey: 'rotas_auth', persistSession: true, autoRefreshToken: true, detectSessionInUrl: false }
   });
   let { data: { session } } = await client.auth.getSession();
+  const emailSession = candidate => {
+    try { return Boolean(candidate && loginEmail(candidate.user?.email)); } catch { return false; }
+  };
+  if (session && !emailSession(session)) {
+    await client.auth.signOut({ scope: 'local' });
+    session = null;
+  }
   let channel;
   const emit = name => window.dispatchEvent(new Event(name));
   const errorMessage = error => {
-    if (/Invalid login credentials/i.test(error?.message || '')) return 'Login ou senha incorretos.';
+    if (/Invalid login credentials/i.test(error?.message || '')) return 'E-mail ou senha incorretos.';
     if (/Email not confirmed/i.test(error?.message || '')) return 'Seu e-mail ainda não foi confirmado no Supabase. Confirme o cadastro para entrar.';
     if (/Failed to fetch|fetch failed|NetworkError/i.test(error?.message || '')) return 'Sem conexão com o sistema. Confira a internet e tente novamente.';
     if (/JWT expired|refresh token|not authenticated/i.test(error?.message || '')) return 'Sessão expirada. Entre novamente.';
@@ -56,29 +57,37 @@ async function createBackend(url, publicKey) {
     channel = client.channel('rotas-sync').on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'sync_state' }, () => emit('rotas:changed')).subscribe();
   }
   client.auth.onAuthStateChange((event, nextSession) => {
+    if (nextSession && !emailSession(nextSession)) {
+      session = null;
+      setTimeout(() => client.auth.signOut({ scope: 'local' }).catch(() => {}), 0);
+      emit('rotas:signed-out');
+      return;
+    }
     session = nextSession;
     if (event === 'SIGNED_OUT') emit('rotas:signed-out');
     if (event === 'SIGNED_IN' || event === 'SIGNED_OUT') setTimeout(() => watch().catch(() => {}), 0);
   });
   async function manageUser(item) {
-    const { data, error } = await client.functions.invoke('manage-users', { body: { item } });
+    const { data, error } = await client.rpc('rotas_manage_email_user', { item: { ...item, email: loginEmail(item.email) } }).abortSignal(AbortSignal.timeout(20000));
     if (error) {
-      let detail;
-      try { detail = await error.context?.json(); } catch {}
-      throw Error(detail?.error || errorMessage(error));
+      throw Error(errorMessage(error));
     }
     if (data?.error) throw Error(data.error);
     return data;
   }
   async function api(action, data = {}) {
     if (action === 'login') {
-      const { error } = await client.auth.signInWithPassword({ email: loginEmail(data.login), password: data.password });
+      const { data: signedIn, error } = await client.auth.signInWithPassword({ email: loginEmail(data.email), password: data.password });
       if (error) throw Error(errorMessage(error));
+      if (!emailSession(signedIn.session)) {
+        await client.auth.signOut({ scope: 'local' });
+        throw Error('Entre com seu e-mail cadastrado. O acesso por usuário antigo foi encerrado.');
+      }
       try { const user = await rpc('me'); await watch(); return { user }; }
       catch (error) {
         await client.auth.signOut({ scope: 'local' });
         if (/Sessão inválida|usuário inativo/i.test(error.message || '')) {
-          throw Error('Sua conta foi autenticada no Supabase, mas ainda não tem um perfil ativo vinculado no sistema. A administração precisa configurar seu acesso.');
+          throw Error('E-mail e senha confirmados. A Secretaria precisa vincular este e-mail a um perfil ativo de Secretaria, Escola ou Monitor.');
         }
         throw error;
       }
@@ -91,8 +100,8 @@ async function createBackend(url, publicKey) {
     if (action === 'changePassword') {
       if (!data.current || !data.next || data.next.length < 12) throw Error('Informe a senha atual e uma nova senha de pelo menos 12 caracteres.');
       if (data.current === data.next) throw Error('A nova senha deve ser diferente da senha atual.');
-      const email = session?.user?.email;
-      if (!email) throw Error('Sessão expirada. Entre novamente.');
+      if (!emailSession(session)) throw Error('Sessão expirada. Entre novamente com seu e-mail.');
+      const email = loginEmail(session.user.email);
       const checked = await client.auth.signInWithPassword({ email, password: data.current });
       if (checked.error) throw Error('Senha atual incorreta.');
       const updated = await client.auth.updateUser({ password: data.next });
@@ -105,7 +114,7 @@ async function createBackend(url, publicKey) {
       let created = 0;
       for (const group of plan.groups) {
         for (const monitor of group.monitors.filter(m => !m.exists)) {
-          await manageUser({ nome: monitor.nome, login: monitor.login, perfil: 'monitor', password: data.passwords?.[monitor.key] });
+          await manageUser({ nome: monitor.nome, email: monitor.email, perfil: 'monitor' });
           created++;
         }
       }
@@ -319,9 +328,9 @@ function loginHtml(){
       <section class="auth-card" aria-labelledby="accessTitle">
         <span class="auth-lock">${icon('lock')}</span>
         <h2 id="accessTitle">Acesse sua conta</h2>
-        <p class="auth-sub">Use o e-mail cadastrado no Supabase e sua senha.</p>
+        <p class="auth-sub">Use seu e-mail cadastrado e sua senha.</p>
         <form id="loginForm" aria-busy="${S.busy}">
-          <div class="field"><label for="login">E-mail ou login</label><input id="login" name="login" type="text" inputmode="email" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="Seu e-mail ou login individual" required></div>
+          <div class="field"><label for="email">E-mail</label><input id="email" name="email" type="email" inputmode="email" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="voce@exemplo.com" maxlength="254" required></div>
           <div class="field"><label for="password">Senha</label><input id="password" name="password" type="password" autocomplete="current-password" placeholder="Sua senha" required></div>
           <button class="btn primary auth-submit" type="submit" ${S.busy?'disabled':''}>${S.busy?'Entrando…':'Entrar no sistema'}${icon('chevron')}</button>
         </form>
@@ -570,7 +579,7 @@ function usersScreen(){
     <div class="rows">${users.map(u=>{
       const monitor=u.perfil==='monitor';
       const names=a('assignments').filter(item=>item.usuarioId===u.id).map(item=>find('routes',item.rotaId)).filter(isActive).map(r=>r.nome);
-      return `<div class="list-row"><div class="avatar">${E(initials(u.nome))}</div><div class="list-main"><b>${E(u.nome)} ${!isActive(u)?'<span class="tag warn">Inativo</span>':''}</b><small>${E(u.login)} · ${E({secretaria:'Secretaria',escola:'Escola',monitor:'Monitor'}[u.perfil])}${u.escolaId?' · '+E(val('schools',u.escolaId)):''}</small>${monitor?`<small class="user-route-names">${names.length?E(names.join(' · ')):'Sem rota vinculada'}</small>`:''}</div><div class="list-actions">
+      return `<div class="list-row"><div class="avatar">${E(initials(u.nome))}</div><div class="list-main"><b>${E(u.nome)} ${!isActive(u)?'<span class="tag warn">Inativo</span>':''}</b><small>${E(u.email||'E-mail ainda não vinculado')} · ${E({secretaria:'Secretaria',escola:'Escola',monitor:'Monitor'}[u.perfil])}${u.escolaId?' · '+E(val('schools',u.escolaId)):''}</small>${monitor?`<small class="user-route-names">${names.length?E(names.join(' · ')):'Sem rota vinculada'}</small>`:''}</div><div class="list-actions">
       <button class="btn small" data-act="edit" data-type="user" data-id="${E(u.id)}">Editar</button>
       ${monitor&&isActive(u)?`<button class="btn small" data-act="assign" data-id="${E(u.id)}">${names.length?'Editar rotas':'Vincular rotas'}</button>`:''}</div></div>`;
     }).join('')}</div></div>`;
@@ -642,11 +651,11 @@ function monitorSetupDialog(m){
   if(!m.plan)return `<p role="status">${E(m.error||'Consultando as rotas e os acessos…')}</p>${m.error?'<button class="btn" type="button" data-act="monitorSetup">Tentar novamente</button>':''}`;
   const routes=a('routes').filter(isActive);
   return `<form id="modalForm" data-form="monitorSetup">
-    <p class="tip">Confira as duas rotas e defina as senhas temporárias dos novos acessos. Leticia e Carla terão contas individuais na mesma rota.</p>
+    <p class="tip">Confira as duas rotas. As monitoras usarão as contas de e-mail já cadastradas. Leticia e Carla terão acessos individuais na mesma rota.</p>
     ${m.plan.groups.map(group=>`<fieldset class="monitor-setup-group"><legend>${E(group.nome)} · ${group.stops.length} pontos</legend>
       ${selectField('route_'+group.key,'Rota cadastrada',routes,m.routeIds[group.key],'Selecione a rota correspondente','required')}
-      ${group.monitors.map(monitor=>`<div class="monitor-setup-account"><strong>${E(monitor.nome)}</strong><p>Login: <b>${E(monitor.login)}</b></p>
-        ${monitor.exists?'<p>Conta existente: a senha atual será mantida.</p>':field('password_'+monitor.key,'Senha temporária de '+monitor.nome,'','Mínimo 12 caracteres','type="password" minlength="12" required autocomplete="new-password"')}
+      ${group.monitors.map(monitor=>`<div class="monitor-setup-account"><strong>${E(monitor.nome)}</strong><p>E-mail: <b>${E(monitor.email)}</b></p>
+        ${monitor.exists?'<p>Conta vinculada. A senha atual será mantida.</p>':'<p>O perfil será vinculado à conta já criada no Authentication do Supabase.</p>'}
       </div>`).join('')}
       <details><summary>Conferir os pontos na ordem do arquivo</summary><ol>${group.stops.map(name=>`<li>${E(name)}</li>`).join('')}</ol></details>
     </fieldset>`).join('')}
@@ -778,7 +787,7 @@ title='Novo ano letivo';sub='Os estudantes antigos permanecem no histórico. Cad
     sub = `Ano letivo ${m.year}`;
     body = studentImportForm(m);
   }
-  else{const type=m.type,item=m.draft||{},edit=!!m.id;title=(edit?'Editar ':'Cadastrar ')+TYPE[type].toLowerCase();sub='Os dados serão salvos no Google Sheets e atualizados nos demais acessos.';submit=edit?'Salvar alterações':'Cadastrar';
+  else{const type=m.type,item=m.draft||{},edit=!!m.id;title=(edit?'Editar ':'Cadastrar ')+TYPE[type].toLowerCase();sub=type==='user'?'Defina as permissões do e-mail cadastrado no Supabase.':'Os dados serão salvos e atualizados nos demais acessos.';submit=edit?'Salvar alterações':'Cadastrar';
     const schools=a('schools'), schoolId=role()==='escola'?user().escolaId:item.escolaId||'';
     const routeId=item.rotaId||'';
     const cls=a('classes').filter(x=>x.escolaId===schoolId);
@@ -822,7 +831,12 @@ title='Novo ano letivo';sub='Os estudantes antigos permanecem no histórico. Cad
           + field('responsavel', 'Responsável', item.responsavel, 'Nome do responsável', guardianRequired ? 'required' : '')
           + field('celular', 'Celular do responsável', item.celular, '(38) 99999-9999', 'type="tel"');
       }
-      if(type==='user')body=field('nome','Nome completo',item.nome,'Nome do usuário','required')+field('login','Login',item.login,'nome.sobrenome',edit?'required readonly':'required pattern="[a-z0-9][a-z0-9._-]{2,79}" minlength="3" maxlength="80" autocapitalize="none"')+`<div class="field"><label for="f_perfil">Perfil de acesso</label><select name="perfil" id="f_perfil" data-cascade="yes" required><option value="secretaria" ${item.perfil==='secretaria'?'selected':''}>Secretaria</option><option value="escola" ${item.perfil==='escola'?'selected':''}>Escola</option><option value="monitor" ${item.perfil==='monitor'?'selected':''}>Monitor</option></select></div>`+(item.perfil==='escola'?selectField('escolaId','Escola',schools,item.escolaId,'Selecione uma escola','required'):'')+field('password',edit?'Redefinir senha (deixe vazio para manter)':'Senha temporária (mín. 12 caracteres)','',edit?'Opcional':'Mínimo 12 caracteres',edit?'type="password" minlength="12"':'type="password" minlength="12" required')+(edit?`<div class="field"><label for="f_ativo">Situação</label><select id="f_ativo" name="ativo"><option value="SIM" ${item.ativo!=='NAO'?'selected':''}>Ativo</option><option value="NAO" ${item.ativo==='NAO'?'selected':''}>Inativo</option></select></div>`:'')+`<div class="tip">A senha temporária deverá ser alterada pelo usuário no primeiro acesso.</div>`;
+      if(type==='user')body=field('nome','Nome completo',item.nome,'Nome do usuário','required')
+        +field('email','E-mail cadastrado',item.email,'voce@exemplo.com','type="email" maxlength="254" required autocapitalize="none"'+(edit&&item.email?' readonly':''))
+        +`<div class="field"><label for="f_perfil">Perfil de acesso</label><select name="perfil" id="f_perfil" data-cascade="yes" required><option value="secretaria" ${item.perfil==='secretaria'?'selected':''}>Secretaria</option><option value="escola" ${item.perfil==='escola'?'selected':''}>Escola</option><option value="monitor" ${item.perfil==='monitor'?'selected':''}>Monitor</option></select></div>`
+        +(item.perfil==='escola'?selectField('escolaId','Escola',schools,item.escolaId,'Selecione uma escola','required'):'')
+        +(edit?`<div class="field"><label for="f_ativo">Situação</label><select id="f_ativo" name="ativo"><option value="SIM" ${isActive(item)?'selected':''}>Ativo</option><option value="NAO" ${!isActive(item)?'selected':''}>Inativo</option></select></div>`:'')
+        +`<div class="tip">Use o e-mail de uma conta já criada no Authentication do Supabase. Aqui você define o perfil e as permissões. A senha é a mesma dessa conta.</div>`;
       body=`<form id="modalForm" data-form="${E(type)}"><div class="form-grid">${body}</div>${modalActions(false,submit)}</form>`;
     }
   }
@@ -858,7 +872,7 @@ function exportCSV(what){let headers=[],rows=[];
     headers=['Rota','Ano letivo','Escolas atendidas','Motorista','Veículo'];
     rows=a('routes').map(route=>[route.nome,route.ano,routeSchoolNames(route),route.motorista,route.veiculo]);
   }
-  else if(what==='users'){headers=['Nome','Login','Perfil','Escola','Situação'];rows=a('users').map(u=>[u.nome,u.login,u.perfil,val('schools',u.escolaId),u.ativo]);}
+  else if(what==='users'){headers=['Nome','E-mail','Perfil','Escola','Situação'];rows=a('users').map(u=>[u.nome,u.email||'',u.perfil,val('schools',u.escolaId),u.ativo]);}
   else{const cols={schools:['nome'],classes:['nome','ano','escolaId'],stops:['nome','rotaId','ordem']}[what];if(!cols)return;headers=cols;rows=a(what).map(x=>cols.map(c=>c==='escolaId'?val('schools',x[c]):c==='rotaId'?val('routes',x[c]):x[c]));}
   const text='\ufeff'+[headers,...rows].map(row=>row.map(csvCell).join(';')).join('\r\n');
   const link=document.createElement('a'),url=URL.createObjectURL(new Blob([text],{type:'text/csv;charset=utf-8;'}));link.href=url;link.download='Rotas_Carbonita_'+what+'_'+S.year+'.csv';document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),2000);
@@ -1332,8 +1346,7 @@ async function handleSubmit(e){const form=e.target;e.preventDefault();
   }
   if(what==='monitorSetup'){
     m.routeIds=Object.fromEntries(m.plan.groups.map(group=>[group.key,x['route_'+group.key]]));
-    const passwords=Object.fromEntries(m.plan.groups.flatMap(group=>group.monitors.filter(monitor=>!monitor.exists).map(monitor=>[monitor.key,x['password_'+monitor.key]])));
-    await mutate('setupMonitors',{year:m.year,routeIds:m.routeIds,passwords},'Acessos e pontos configurados: Elenice em Leites; Leticia e Carla em Simão.');
+    await mutate('setupMonitors',{year:m.year,routeIds:m.routeIds},'Acessos e pontos configurados: Elenice em Leites; Leticia e Carla em Simão.');
     return;
   }
   if(what==='scannerCode'){
