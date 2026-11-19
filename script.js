@@ -19,7 +19,15 @@ function createClient(...args) { return RotasSupabase.createClient(...args); }
 
 function loginEmail(login) {
   const value = String(login || '').trim().toLowerCase();
-  if (!/^[a-z0-9][a-z0-9._-]{2,79}$/.test(value)) throw Error('Informe seu login individual, com pelo menos 3 caracteres.');
+  // Contas criadas no Supabase Auth entram com o próprio e-mail.
+  if (value.includes('@')) {
+    if (value.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+      throw Error('Informe um e-mail válido cadastrado no Supabase.');
+    }
+    return value;
+  }
+  // Mantém a compatibilidade com os logins individuais do sistema anterior.
+  if (!/^[a-z0-9][a-z0-9._-]{2,79}$/.test(value)) throw Error('Informe seu e-mail cadastrado no Supabase ou o login individual fornecido pela Secretaria.');
   return `${value}@acesso.rotas.invalid`;
 }
 
@@ -32,6 +40,7 @@ async function createBackend(url, publicKey) {
   const emit = name => window.dispatchEvent(new Event(name));
   const errorMessage = error => {
     if (/Invalid login credentials/i.test(error?.message || '')) return 'Login ou senha incorretos.';
+    if (/Email not confirmed/i.test(error?.message || '')) return 'Seu e-mail ainda não foi confirmado no Supabase. Confirme o cadastro para entrar.';
     if (/Failed to fetch|fetch failed|NetworkError/i.test(error?.message || '')) return 'Sem conexão com o sistema. Confira a internet e tente novamente.';
     if (/JWT expired|refresh token|not authenticated/i.test(error?.message || '')) return 'Sessão expirada. Entre novamente.';
     return error?.message || 'Não foi possível concluir. Tente novamente.';
@@ -66,7 +75,13 @@ async function createBackend(url, publicKey) {
       const { error } = await client.auth.signInWithPassword({ email: loginEmail(data.login), password: data.password });
       if (error) throw Error(errorMessage(error));
       try { const user = await rpc('me'); await watch(); return { user }; }
-      catch (error) { await client.auth.signOut({ scope: 'local' }); throw error; }
+      catch (error) {
+        await client.auth.signOut({ scope: 'local' });
+        if (/Sessão inválida|usuário inativo/i.test(error.message || '')) {
+          throw Error('Sua conta foi autenticada no Supabase, mas ainda não tem um perfil ativo vinculado no sistema. A administração precisa configurar seu acesso.');
+        }
+        throw error;
+      }
     }
     if (action === 'logout') {
       const { error } = await client.auth.signOut({ scope: 'local' });
@@ -304,9 +319,9 @@ function loginHtml(){
       <section class="auth-card" aria-labelledby="accessTitle">
         <span class="auth-lock">${icon('lock')}</span>
         <h2 id="accessTitle">Acesse sua conta</h2>
-        <p class="auth-sub">Use o login e a senha fornecidos pela Secretaria.</p>
+        <p class="auth-sub">Use o e-mail cadastrado no Supabase e sua senha.</p>
         <form id="loginForm" aria-busy="${S.busy}">
-          <div class="field"><label for="login">Login individual</label><input id="login" name="login" autocomplete="username" autocapitalize="none" placeholder="Seu usuário" required></div>
+          <div class="field"><label for="login">E-mail ou login</label><input id="login" name="login" type="text" inputmode="email" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="Seu e-mail ou login individual" required></div>
           <div class="field"><label for="password">Senha</label><input id="password" name="password" type="password" autocomplete="current-password" placeholder="Sua senha" required></div>
           <button class="btn primary auth-submit" type="submit" ${S.busy?'disabled':''}>${S.busy?'Entrando…':'Entrar no sistema'}${icon('chevron')}</button>
         </form>
