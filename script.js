@@ -492,22 +492,51 @@ function absencePanel(routeId='',schoolId=''){
     ${recorded.length?`<details class="absence-history"><summary>Motivos registrados (${recorded.length})</summary><ul class="absence-list">${recorded.map(row).join('')}</ul></details>`:''}
   </section>`;
 }
+function latestBoarding(route,day){
+  if(!route)return '';
+  let latest;
+  if(S.data.day===day){
+    for(const call of a('calls')){
+      if(call.rotaId!==route.id||call.status!=='PRESENTE'||!call.registradoEm)continue;
+      const timestamp=Date.parse(call.registradoEm);
+      if(Number.isFinite(timestamp)&&(!latest||timestamp>Date.parse(latest.registradoEm)))latest=call;
+    }
+  }
+  const student=latest&&find('students',latest.estudanteId);
+  const detail=latest?[student?.nome,DIRECTION[latest.sentido],timeHuman(latest.registradoEm)].filter(Boolean).join(' · ')
+    :S.data.day===day?'Nenhum embarque registrado hoje.':'Confira os registros de hoje na chamada.';
+  return `<div class="latest-boarding">
+    <span class="latest-boarding-icon">${icon(latest?'checkCircle':'checklist')}</span>
+    <div><h3>Último embarque</h3><p>${E(detail)}</p></div>
+  </div>`;
+}
 function monitorDashboard(){
   const day=todayLocal();
   const routes=a('routes').filter(isActive);
   const route=chooseRoute(routes);
-  return `<p class="eyebrow">Operação diária · ${dateHuman(day)}</p>
-    <div class="hero boarding-hero"><div><h1>Embarques de hoje</h1><p>Registre a ida e a volta com o crachá do estudante.</p></div></div>
+  const shiftLabels=new Map([['MANHA','Manhã'],['TARDE','Tarde']]);
+  const shifts=[...new Set([route?.turno,...(Array.isArray(route?.turnos)?route.turnos:[])]
+    .map(shift=>shiftLabels.get(String(shift??'').trim().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase())).filter(Boolean))];
+  return `<div class="monitor-home">
+    <header class="monitor-heading">
+      <time datetime="${day}">${dateHuman(day)}</time>
+      <h1>Embarques de hoje</h1>
+    </header>
     ${routes.length?`<div class="monitor-grid">
       <section class="panel boarding-panel" aria-labelledby="boardingTitle">
+        <div class="monitor-route-context">
+          ${routePicker(routes,route,true)}
+          ${shifts.length?`<span class="monitor-shift">${shifts.join(' e ')}</span>`:''}
+        </div>
         <h2 class="panel-title" id="boardingTitle">Registrar embarque</h2>
-        ${routePicker(routes,route,true)}${boardingActions(route,day)}
-        ${routeDayButton(route,day)}
+        ${boardingActions(route,day)}
+        ${latestBoarding(route,day)}
         <button class="btn boarding-list-link" type="button" data-act="todayCalls">Ver lista de chamada ${icon('chevron')}</button>
+        ${routeDayButton(route,day)}
       </section>
       ${absencePanel()}
-      ${routePointsPanel(route,true)}
-    </div>`:empty('Nenhuma rota vinculada','A Secretaria pode vincular até duas rotas ao seu acesso.')}`;
+      ${routePointsPanel(route)}
+    </div>`:empty('Nenhuma rota vinculada','A Secretaria pode vincular até duas rotas ao seu acesso.')}</div>`;
 }
 function attendanceRoster(route){
   const schools=routeSchools(route);
@@ -1333,7 +1362,7 @@ async function saveScan(m,code,typed=false){
     const result=await api('attendance',{day:m.day,routeId:m.routeId,sentido:m.direction,qr:code,typed});
     if(S.modal!==m)return;
     m.result=result;
-    if(result.call?.data===S.day)S.data.calls=[...a('calls').filter(call=>call.id!==result.call.id),result.call];
+    if(result.call?.data===S.data.day)S.data.calls=[...a('calls').filter(call=>call.id!==result.call.id),result.call];
   }catch(e){
     if(S.modal!==m)return;
     if(sessionEnded(e.message)){warn(e);return;}
@@ -1355,7 +1384,11 @@ async function handleClick(e){const b=e.target.closest('[data-act]');if(!b)retur
   if(act==='overlay'){if(e.target===b)closeModal();return;}
   if(act==='menu'){S.menu=!S.menu;render();$('portalMenu')?.focus({preventScroll:true});return;}
   if(act==='nav'){
-    stopCamera();S.view=b.dataset.view;S.menu=false;S.modal=null;render();
+    stopCamera();S.view=b.dataset.view;S.menu=false;S.modal=null;
+    const day=todayLocal();
+    if(role()==='monitor'&&S.view==='dashboard'&&S.data.day!==day){
+      S.day=day;await load(true);
+    }else render();
     window.scrollTo(0,0);$('conteudo')?.focus({preventScroll:true});return;
   }
   if(act==='todayCalls'){

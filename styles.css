@@ -1230,3 +1230,67 @@ html:has(.modal-mask) { overflow: hidden; }
   .data-table { font-size: 10pt; }
   .footer-inner { padding-block: 8px; }
 }
+
+.monitor-heading { margin-bottom: 18px; }
+.monitor-heading time { color: var(--text); font-size: .875rem; font-variant-numeric: tabular-nums; }
+.monitor-heading h1 {
+  margin: 2px 0 0;
+  color: var(--heading);
+  font-size: clamp(1.75rem, 4.6vw, 2.55rem);
+  line-height: 1.12;
+  letter-spacing: -.035em;
+}
+
+.monitor-home .monitor-grid > .panel { min-width: 0; border-radius: 18px; }
+.monitor-home .boarding-panel {
+  padding: clamp(14px, 3vw, 24px);
+  border-top: 1px solid var(--line);
+}
+.monitor-route-context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  gap: 8px 12px;
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--tint);
+}
+.monitor-route-context .boarding-route { flex: 1 1 160px; }
+.monitor-route-context .boarding-route-fixed { padding: 0; border: 0; background: transparent; }
+.monitor-route-context .control { min-height: 44px; border-radius: 9px; }
+.monitor-shift { color: var(--heading); font-size: .8125rem; font-weight: 650; }
+
+.monitor-home .boarding-panel > .panel-title { margin-bottom: 9px; }
+.monitor-home .direction-btn {
+  min-height: 66px;
+  padding: 10px;
+  border-radius: 14px;
+  transition: background-color .16s ease, border-color .16s ease;
+}
+.monitor-home .direction-btn strong { font-size: clamp(.875rem, 2.7vw, 1.0625rem); }
+.monitor-home .direction-volta { background: var(--tint); }
+.monitor-home .direction-btn:active:not(:disabled) { box-shadow: inset 0 0 0 2px currentColor; }
+
+.latest-boarding {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--canvas);
+  overflow-wrap: anywhere;
+}
+.latest-boarding-icon { display: grid; flex: none; place-items: center; color: var(--blue); }
+.latest-boarding h3 { margin: 0; color: var(--heading); font-size: .875rem; }
+.latest-boarding p { margin: 2px 0 0; color: var(--text); font-size: .8125rem; }
+.monitor-home .boarding-list-link { min-height: 44px; border-radius: 12px; }
+.monitor-home .route-guide summary { min-height: 44px; padding-block: 9px; }
+
+@media (max-width: 460px) {
+  .monitor-home .boarding-directions { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .monitor-home .direction-btn { min-height: 56px; }
+  .monitor-home .direction-arrow { display: flex; }
+}
