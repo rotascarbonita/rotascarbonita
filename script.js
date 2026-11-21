@@ -834,6 +834,8 @@ title='Novo ano letivo';sub='Os estudantes antigos permanecem no histórico. Cad
           + selectField('rotaId', 'Rota', routes, item.rotaId, 'A definir', 'data-cascade="yes"')
           + field('logradouro', 'Logradouro', item.logradouro, 'Rua, avenida ou localidade', 'maxlength="200"')
           + selectField('pontoId', 'Ponto', points, item.pontoId, 'A definir')
+          + field('nomeMae', 'Nome completo da mãe', item.nomeMae, 'Nome e sobrenome', 'maxlength="140"' + (!edit || previous?.nomeMae ? ' required' : ''))
+          + field('nomePai', 'Nome completo do pai (opcional)', item.nomePai, 'Nome e sobrenome', 'maxlength="140"')
           + field('responsavel', 'Responsável', item.responsavel, 'Nome do responsável', guardianRequired ? 'required' : '')
           + field('celular', 'Celular do responsável', item.celular, '(38) 99999-9999', 'type="tel"');
       }
@@ -883,9 +885,83 @@ function exportCSV(what){let headers=[],rows=[];
   const text='\ufeff'+[headers,...rows].map(row=>row.map(csvCell).join(';')).join('\r\n');
   const link=document.createElement('a'),url=URL.createObjectURL(new Blob([text],{type:'text/csv;charset=utf-8;'}));link.href=url;link.download='Rotas_Carbonita_'+what+'_'+S.year+'.csv';document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),2000);
 }
+function badgeDocument(student,qr,{school,route,stop}){
+  const firstName=String(student.nome||'').trim().split(/\s+/)[0];
+  const fields=[
+    ['Nome completo',student.nome],['Mãe',student.nomeMae],['Pai',student.nomePai],
+    ['Endereço',student.logradouro],['Telefone',student.celular]
+  ];
+  return `<!doctype html>
+<html lang="pt-BR"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Crachá escolar</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;padding:20px;font:14px Arial,sans-serif;color:#173756;background:#f5f8fc}
+  main{display:flex;justify-content:center;flex-wrap:wrap;gap:20px}
+  section{max-width:100%;text-align:center}
+  .caption{margin:0 0 8px;color:#475f75;font-size:13px;font-weight:bold}
+  .card{width:90mm;max-width:100%;min-height:135mm;padding:7mm;border:1px solid #b8cadd;border-radius:4mm;background:white;overflow-wrap:anywhere}
+  h1,h2,p{margin:0}
+  h1{font-size:19px;margin-bottom:10px}
+  small{font-size:11px;color:#475f75}
+  .school{margin-top:8px}
+  svg{display:block;width:49mm;height:49mm;margin:14px auto 7px;max-width:100%}
+  .first-name{font-size:20px;font-weight:bold}
+  .badge-code{font-size:15px;font-weight:bold;margin:4px 0 12px}
+  .routes{font-size:12px;margin-bottom:12px}
+  .notice{font-size:11px;margin-top:8px}
+  .back{text-align:left}
+  .back h2{text-align:center;font-size:18px;margin-bottom:18px}
+  dl{margin:0}
+  dl div{padding-bottom:6px;margin-bottom:10px;border-bottom:1px solid #b8cadd;break-inside:avoid}
+  dt{font-size:11px;font-weight:bold;color:#475f75}
+  dd{margin:4px 0 0;min-height:1em;font-size:13px}
+  footer{text-align:center}
+  button{padding:10px 20px;margin:18px 0 8px;border:0;border-radius:9px;background:#175fba;color:white;cursor:pointer}
+  footer p{font-size:12px;color:#475f75}
+  @page{size:A4 portrait;margin:12mm}
+  @media print{
+    body{padding:0;background:white}
+    main{display:block}
+    section{break-inside:avoid}
+    section+section{break-before:page}
+    .card{margin:0 auto;border-color:#778da3}
+    .caption,footer{display:none}
+  }
+</style></head><body>
+<main>
+  <section aria-label="Frente do crachá">
+    <p class="caption">Frente do crachá</p>
+    <div class="card">
+      <h1>TRANSPORTE ESCOLAR</h1>
+      <small>REDE MUNICIPAL · CARBONITA/MG</small>
+      <p class="school">${E(school)}</p>
+      ${qr}
+      <p class="first-name">${E(firstName)}</p>
+      <p class="badge-code">${E(student.crachaCodigo)}</p>
+      <p class="routes"><b>Rota:</b> ${E(route)}<br><b>Ponto:</b> ${E(stop)}</p>
+      <small>Uso exclusivo no transporte escolar</small>
+      <p class="notice">Encontrou este crachá? Entregue à escola ou à Secretaria de Educação.</p>
+    </div>
+  </section>
+  <section aria-label="Verso do crachá">
+    <p class="caption">Verso do crachá</p>
+    <div class="card back">
+      <h2>Dados pessoais</h2>
+      <dl>${fields.map(([label,value])=>`<div><dt>${label}</dt><dd>${E(String(value??'').trim()||'—')}</dd></div>`).join('')}</dl>
+    </div>
+  </section>
+</main>
+<footer>
+  <button type="button" onclick="window.print()">Imprimir crachá</button>
+  <p>Para imprimir frente e verso, selecione a opção de virar pela borda longa.</p>
+</footer>
+</body></html>`;
+}
 async function printBadge(id){
   const s=find('students',id);
-  if(!s||!s.qrToken||!s.crachaCodigo){message('Atualize os dados. Crachá disponível somente para Escola e Secretaria.',true);return;}
+  if(!canEdit()||!s||!s.qrToken||!s.crachaCodigo){message('Atualize os dados. Crachá disponível somente para Escola e Secretaria.',true);return;}
   const win=window.open('','_blank','width=465,height=700');
   if(!win){message('Permita janelas para imprimir o crachá.',true);return;}
   const token=S.token;
@@ -893,7 +969,10 @@ async function printBadge(id){
     await window.loadRotasAsset('QRCodeVendor');
     if(win.closed)return;
     if(S.token!==token){win.close();return;}
-    const svg=window.makeQrSvg('TC:'+s.qrToken);const html=`<!doctype html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Crachá escolar</title><style>body{font-family:Arial,sans-serif;color:#173756;text-align:center;padding:25px}.card{display:inline-block;border:2px solid #e0e9f1;border-radius:16px;padding:28px;width:310px}h2{font-size:19px}h3{font-size:16px;margin-top:20px}small{color:#698297}svg{width:210px;height:210px}p{font-size:13px}button{padding:10px 24px;margin:20px;border:0;border-radius:9px;background:#2870d5;color:white;cursor:pointer}@media print{button{display:none}}</style></head><body><div class="card"><h2>TRANSPORTE ESCOLAR</h2><small>REDE MUNICIPAL · CARBONITA/MG</small><p>${E(val('schools',s.escolaId))}</p>${svg}<h3>${E(s.crachaCodigo)}</h3><p><b>Rota:</b> ${E(val('routes',s.rotaId))}<br><b>Ponto:</b> ${E(val('stops',s.pontoId))}</p><small>Uso exclusivo no transporte escolar</small><p>Encontrou este crachá? Entregue à escola ou à Secretaria de Educação.</p></div><div><button onclick="window.print()">Imprimir crachá</button></div></body></html>`;
+    const svg=window.makeQrSvg('TC:'+s.qrToken);
+    const html=badgeDocument(s,svg,{
+      school:val('schools',s.escolaId),route:val('routes',s.rotaId),stop:val('stops',s.pontoId)
+    });
     win.document.open();
     win.document.write(html);
     win.document.close();
