@@ -248,6 +248,12 @@ function canEdit(){return role()==='secretaria'||role()==='escola';}
 function routeSchoolIds(route){return route?.escolaIds||[];}
 function routeSchools(route){return a('schools').filter(school=>routeSchoolIds(route).includes(school.id));}
 function routeSchoolNames(route){return routeSchools(route).map(school=>school.nome).join(' · ');}
+function canManageStudent(student){
+  return canEdit()||role()==='monitor'&&(student
+    ? isActive(student)&&Boolean(find('routes',student.rotaId))
+      &&(!student.pontoId||find('stops',student.pontoId)?.rotaId===student.rotaId)
+    : a('routes').some(isActive));
+}
 function canEditRoute(route){return Boolean(route&&(role()==='secretaria'||(role()==='escola'&&!route.compartilhada)));}
 function canSee(name){if(name==='users'||name==='schools')return role()==='secretaria';if(role()==='monitor')return ['dashboard','students','attendance','reports'].includes(name);return true;}
 let renderedView='', renderedModalType='', renderedMenu=false;
@@ -355,7 +361,7 @@ function filteredStudents(){const f=S.filters,term=f.search.trim().toLowerCase()
 function studentCard(s){
   const pending=!s.rotaId;
   const editButton=`<button type="button" class="link-btn" data-act="edit" data-type="student" data-id="${E(s.id)}" aria-label="${E((pending?'Definir rota e ponto de ':'Alterar rota ou ponto de ')+s.nome)}">${pending?'Definir rota e ponto':'Alterar rota ou ponto'}</button>`;
-  const actions=canEdit()?`<button type="button" class="link-btn" data-act="edit" data-type="student" data-id="${E(s.id)}">Editar estudante</button><button type="button" class="link-btn" data-act="badge" data-id="${E(s.id)}">▦ Crachá QR</button>${isActive(s)&&s.crachaCodigo?`<button type="button" class="link-btn" data-act="replaceBadge" data-id="${E(s.id)}">Substituir crachá perdido</button>`:''}`:role()==='monitor'?editButton:'';
+  const actions=canManageStudent(s)?`<button type="button" class="link-btn" data-act="edit" data-type="student" data-id="${E(s.id)}">Editar estudante</button><button type="button" class="link-btn" data-act="badge" data-id="${E(s.id)}">▦ Crachá QR</button>${isActive(s)&&s.crachaCodigo?`<button type="button" class="link-btn" data-act="replaceBadge" data-id="${E(s.id)}">Substituir crachá perdido</button>`:''}`:role()==='monitor'&&pending?editButton:'';
   return `<article class="student-card"><div class="student-head"><div class="student-avatar">${E(initials(s.nome))}</div><div class="student-head-title"><b title="${E(s.nome)}">${E(s.nome)}</b><small>${E(val('schools',s.escolaId))}</small></div><span class="tag ${pending?'warn':''}">${pending?'Sem rota':'Vinculado'}</span></div><div class="detail-list">${detail('Código do crachá',s.crachaCodigo||'Atualize os dados')}${detail('Rota',val('routes',s.rotaId))}${canEdit()&&s.logradouro?detail('Logradouro',s.logradouro):''}${detail('Ponto',val('stops',s.pontoId))}${s.responsavel?detail('Responsável',s.responsavel):''}${s.celular?detail('Celular',s.celular):''}</div><div class="student-actions">${actions}</div></article>`;
 }
 function detail(label,value){return `<div class="detail-item"><span>${E(label)}</span><b title="${E(value)}">${E(value)}</b></div>`;}
@@ -384,7 +390,7 @@ function dashboard(){
   return hero('Visão geral','Acompanhe estudantes, escolas, rotas e pontos num único lugar.',canEdit()?plus('student'):'')+stats()+filtersHtml()+studentResults(filteredStudents().slice(0,12));
 }
 function studentsScreen(){
-  const actions = canEdit() ? plus('student') + '<button class="btn" data-act="studentImport">Importar planilha</button>' : '';
+  const actions = (canManageStudent() ? plus('student') : '') + (canEdit() ? '<button class="btn" data-act="studentImport">Importar planilha</button>' : '');
   return hero('Estudantes transportados','Cadastros e informações de transporte organizados por escola e rota.',actions)+filtersHtml()+studentResults(filteredStudents());
 }
 function subtitles(type,obj){switch(type){case 'school':return 'Escola ativa';case 'class':return val('schools',obj.escolaId)+' · '+obj.ano;case 'route':return [routeSchoolNames(obj),obj.veiculo,!isActive(obj)?'Inativa':''].filter(Boolean).join(' · ');case 'stop':return val('routes',obj.rotaId)+' · Ordem '+obj.ordem;default:return '';}}
@@ -799,7 +805,7 @@ title='Novo ano letivo';sub='Os estudantes antigos permanecem no histórico. Cad
     const cls=a('classes').filter(x=>x.escolaId===schoolId);
     const routes=a('routes').filter(route=>routeSchoolIds(route).includes(schoolId)&&(isActive(route)||route.id===routeId));
     const points=a('stops').filter(point=>point.rotaId===routeId&&(isActive(point)||point.id===item.pontoId)).sort(compareStops);
-    if(type==='student'&&role()==='monitor'){
+    if(type==='student'&&role()==='monitor'&&edit&&!find('students',m.id)?.rotaId){
       const original=find('students',m.id);
       const linked=Boolean(original?.rotaId);
       const moving=linked&&routeId!==original.rotaId;
@@ -826,18 +832,25 @@ title='Novo ano letivo';sub='Os estudantes antigos permanecem no histórico. Cad
       }
       if (type === 'student') {
         const previous = edit ? find('students', m.id) : null;
-        const classRequired = !edit || previous?.turmaId;
+        const monitor = role()==='monitor';
+        const classRequired = (!edit && !monitor && !S.data?.studentFeatures) || previous?.turmaId;
         const guardianRequired = !edit || previous?.responsavel;
-        body = (role() === 'secretaria' ? selectField('escolaId', 'Escola', schools, schoolId, 'Selecione uma escola', 'required data-cascade="yes"') : '')
+        body = (role() !== 'escola' ? selectField('escolaId', 'Escola', schools, schoolId, 'Selecione uma escola', 'required data-cascade="yes"') : '')
           + field('nome', 'Nome completo do estudante', item.nome, 'Nome e sobrenome', 'required')
           + selectField('turmaId', 'Turma', cls, item.turmaId, classRequired ? 'Selecione a turma' : 'A definir', classRequired ? 'required' : '')
-          + selectField('rotaId', 'Rota', routes, item.rotaId, 'A definir', 'data-cascade="yes"')
+          + selectField('rotaId', 'Rota', routes, item.rotaId, 'A definir', 'data-cascade="yes"'+(monitor?' required':''))
           + field('logradouro', 'Logradouro', item.logradouro, 'Rua, avenida ou localidade', 'maxlength="200"')
-          + selectField('pontoId', 'Ponto', points, item.pontoId, 'A definir')
+          + selectField('pontoId', 'Ponto', points, item.pontoId, 'A definir', monitor&&(!edit||previous?.pontoId||previous?.rotaId!==routeId)?'required':'')
           + field('nomeMae', 'Nome completo da mãe', item.nomeMae, 'Nome e sobrenome', 'maxlength="140"' + (!edit || previous?.nomeMae ? ' required' : ''))
           + field('nomePai', 'Nome completo do pai (opcional)', item.nomePai, 'Nome e sobrenome', 'maxlength="140"')
           + field('responsavel', 'Responsável', item.responsavel, 'Nome do responsável', guardianRequired ? 'required' : '')
-          + field('celular', 'Celular do responsável', item.celular, '(38) 99999-9999', 'type="tel"');
+          + field('celular', 'Celular do responsável', item.celular, '(38) 99999-9999', !edit&&S.data?.studentFeatures?'type="tel" required':'type="tel"');
+        if(!edit&&S.data?.studentFeatures){
+          body+=`<fieldset class="assignment-field"><legend>Turnos do estudante</legend>
+            <label class="check-row"><input type="checkbox" name="turnoNovoManha" value="MANHA" ${item.turnoNovoManha?'checked':''}> Manhã</label>
+            <label class="check-row"><input type="checkbox" name="turnoNovoTarde" value="TARDE" ${item.turnoNovoTarde?'checked':''}> Tarde</label>
+          </fieldset>`;
+        }
       }
       if(type==='user')body=field('nome','Nome completo',item.nome,'Nome do usuário','required')
         +field('email','E-mail cadastrado',item.email,'voce@exemplo.com','type="email" maxlength="254" required autocapitalize="none"'+(edit&&item.email?' readonly':''))
@@ -961,7 +974,7 @@ function badgeDocument(student,qr,{school,route,stop}){
 }
 async function printBadge(id){
   const s=find('students',id);
-  if(!canEdit()||!s||!s.qrToken||!s.crachaCodigo){message('Atualize os dados. Crachá disponível somente para Escola e Secretaria.',true);return;}
+  if(!s||!canManageStudent(s)||!s.qrToken||!s.crachaCodigo){message('Crachá indisponível para este acesso. Atualize os dados e confira o vínculo do estudante.',true);return;}
   const win=window.open('','_blank','width=465,height=700');
   if(!win){message('Permita janelas para imprimir o crachá.',true);return;}
   const token=S.token;
@@ -983,7 +996,11 @@ async function printBadge(id){
 }
 function openModal(type,id){
   // O monitor só pode editar rota e ponto de estudantes presentes na visão autorizada.
-  if(role()==='monitor'&&(type!=='student'||!id||!find('students',id)))return;
+  if(role()==='monitor'){
+    if(type!=='student')return;
+    const student=id?find('students',id):null;
+    if(id?(!isActive(student)||(student.rotaId&&!canManageStudent(student))):!canManageStudent())return;
+  }
   stopCamera();const key={student:'students',school:'schools',class:'classes',route:'routes',stop:'stops',user:'users'}[type];const old=id?find(key,id):null;
   const draft=old?{...old}:{};if(type==='user'&&!id)draft.perfil='monitor';if(type==='student'&&role()==='escola')draft.escolaId=user().escolaId;
   if(type==='route'&&!id){const schools=importSchools();draft.escolaIds=schools.length===1?[schools[0].id]:[];}
@@ -1361,7 +1378,7 @@ async function handleClick(e){const b=e.target.closest('[data-act]');if(!b)retur
   }
   if(act==='closeModal'){closeModal();return;}
   if(act==='badge'){await printBadge(id);return;}
-  if(act==='replaceBadge'&&canEdit()){const student=find('students',id);if(!student?.crachaCodigo||!isActive(student))return;stopCamera();S.modal={type:'replaceBadge',id,currentCode:student.crachaCodigo};render();return;}
+  if(act==='replaceBadge'){const student=find('students',id);if(!student||!canManageStudent(student)||!student.crachaCodigo||!isActive(student))return;stopCamera();S.modal={type:'replaceBadge',id,currentCode:student.crachaCodigo};render();return;}
   if(act==='assign'){
     const monitor=find('users',id);
     if(role()!=='secretaria'||monitor?.perfil!=='monitor'||!isActive(monitor))return;
@@ -1424,7 +1441,8 @@ async function handleSubmit(e){const form=e.target;e.preventDefault();
   if (what === 'studentImport') { await submitStudentImport(form, S.modal); return; }
   const x=formData(form),m=S.modal;if(!m)return;
   if(what==='replaceBadge'){
-    if(!canEdit())return;
+    const student=find('students',m.id);
+    if(!student||!canManageStudent(student))return;
     const result=await mutate('replaceBadge',{studentId:m.id,currentCode:m.currentCode},'Crachá antigo cancelado. Abra Crachá QR para imprimir o novo.');
     if(result){const student=find('students',m.id);if(student)Object.assign(student,{crachaCodigo:result.crachaCodigo,qrToken:result.qrToken});render();}
     return;
@@ -1473,7 +1491,7 @@ async function handleSubmit(e){const form=e.target;e.preventDefault();
     x.escolaIds=new FormData(form).getAll('escolaIds');
     if(!x.escolaIds.length){message('Selecione as escolas atendidas pela rota.',true);form.querySelector('input[name="escolaIds"]')?.focus();return;}
   }
-  x.id=m.id||'';if(what==='student'&&role()==='monitor'){
+  x.id=m.id||'';if(what==='student'&&role()==='monitor'&&m.id&&!find('students',m.id)?.rotaId){
     const student=find('students',m.id);
     if(!student)return;
     const routes=a('routes').filter(route=>isActive(route)&&routeSchoolIds(route).includes(student.escolaId));
@@ -1487,6 +1505,20 @@ async function handleSubmit(e){const form=e.target;e.preventDefault();
     const feedback=moved?(student.rotaId?'Rota do estudante alterada.':'Estudante vinculado à rota.'):'Ponto de embarque atualizado.';
     await mutate('save',{type:'student',year:student.ano,item:{id:m.id,rotaId:x.rotaId,pontoId:x.pontoId}},feedback);
     return;
+  }
+  if(what==='student'&&!m.id&&S.data?.studentFeatures){
+    x.turnos=[x.turnoNovoManha,x.turnoNovoTarde].filter(Boolean);
+    if(!x.turnos.length){message('Selecione pelo menos um turno.',true);return;}
+    x.contatosResponsaveis=[{nome:x.responsavel,telefone:x.celular}];
+    delete x.turnoNovoManha;
+    delete x.turnoNovoTarde;
+  }
+  if(what==='student'&&m.id&&S.data?.studentFeatures){
+    const previous=find('students',m.id);
+    const contacts=previous?.contatosResponsaveis||[];
+    if(previous&&(x.responsavel!==(previous.responsavel||'')||x.celular!==(previous.celular||''))&&(contacts.length||x.celular.trim())){
+      x.contatosResponsaveis=[{...contacts[0],nome:x.responsavel,telefone:x.celular},...contacts.slice(1)];
+    }
   }
   if(what==='student'||what==='route'||what==='class'){x.ano=S.year;if(role()==='escola')x.escolaId=user().escolaId;}
   if(what==='user'){if(m.id)x.id=m.id;await mutate('createUser',{item:x},'Usuário cadastrado ou atualizado.');return;}
@@ -1514,6 +1546,10 @@ function handleChange(e){const target=e.target,id=target.id;
   if(target.dataset.cascade&&S.modal){
     const form=$('modalForm');if(!form)return;
     const draft={...S.modal.draft,...formData(form)};
+    if(form.elements.turnoNovoManha){
+      draft.turnoNovoManha=form.elements.turnoNovoManha.checked;
+      draft.turnoNovoTarde=form.elements.turnoNovoTarde.checked;
+    }
     if(target.name==='escolaId'){
       draft.turmaId='';
       if(!routeSchoolIds(find('routes',draft.rotaId)).includes(draft.escolaId)){draft.rotaId='';draft.pontoId='';}
