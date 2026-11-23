@@ -267,6 +267,8 @@ function render(){
   const modalType=S.modal?.type||'';
   const openingDialog=Boolean(modalType&&modalType!==renderedModalType);
   renderedModalType=modalType;
+  const previousModal = !openingDialog && app.querySelector('.modal');
+  const modalScroll = previousModal?.scrollTop ?? 0;
   const dialogOpen=S.modal?'inert':'';
   $('siteHeader')?.toggleAttribute('inert',Boolean(S.modal));
   $('siteFooter')?.toggleAttribute('inert',Boolean(S.modal));
@@ -325,6 +327,10 @@ function render(){
     ${monitor?monitorDock(dialogOpen):''}
     ${S.modal?modalHtml():''}
   </div>`;
+  if (S.modal) {
+    app.querySelector('.modal').scrollTop = modalScroll;
+    if (openingDialog) $('modalTitle')?.focus({preventScroll:true});
+  }
   if(S.modal?.type==='assign')syncAssignmentForm($('modalForm'));
   if(S.modal?.mandatory)$('modalTitle')?.focus();
 }
@@ -419,11 +425,11 @@ function studentResults(items){
 function empty(t,p){return `<div class="empty"><div class="empty-icon">◎</div><b>${E(t)}</b><div>${E(p)}</div></div>`;}
 function dashboard(){
   if(role()==='monitor')return monitorDashboard();
-  return hero('Visão geral','Acompanhe estudantes, escolas, rotas e pontos num único lugar.',canEdit()?plus('student'):'')+stats()+filtersHtml()+studentResults(filteredStudents().slice(0,12));
+  return hero('Visão geral','Acompanhe estudantes, escolas, rotas e pontos num único lugar.',canEdit()?plus('student'):'')+stats()+filtersHtml()+`<div id="studentResults">${studentResults(filteredStudents().slice(0,12))}</div>`;
 }
 function studentsScreen(){
   const actions = (canManageStudent() ? plus('student') : '') + (canEdit() ? '<button class="btn" data-act="studentImport">Importar planilha</button>' : '');
-  return hero('Estudantes transportados','Cadastros e informações de transporte organizados por escola e rota.',actions)+filtersHtml()+studentResults(filteredStudents());
+  return hero('Estudantes transportados','Cadastros e informações de transporte organizados por escola e rota.',actions) + filtersHtml() + `<div id="studentResults">${studentResults(filteredStudents())}</div>`;
 }
 function subtitles(type,obj){switch(type){case 'school':return 'Escola ativa';case 'class':return val('schools',obj.escolaId)+' · '+obj.ano;case 'route':return [routeSchoolNames(obj),obj.veiculo,!isActive(obj)?'Inativa':''].filter(Boolean).join(' · ');case 'stop':return val('routes',obj.rotaId)+' · Ordem '+obj.ordem;default:return '';}}
 function listScreen(type,key){
@@ -1053,7 +1059,7 @@ async function printBadge(id){
     throw e;
   }
 }
-function openModal(type,id){
+function openModal(type,id,trigger){
   // O monitor só pode editar rota e ponto de estudantes presentes na visão autorizada.
   if(role()==='monitor'){
     if(type!=='student')return;
@@ -1063,7 +1069,7 @@ function openModal(type,id){
   stopCamera();const key={student:'students',school:'schools',class:'classes',route:'routes',stop:'stops',user:'users'}[type];const old=id?find(key,id):null;
   const draft=old?{...old}:{};if(type==='user'&&!id)draft.perfil='monitor';if(type==='student'&&role()==='escola')draft.escolaId=user().escolaId;
   if(type==='route'&&!id){const schools=importSchools();draft.escolaIds=schools.length===1?[schools[0].id]:[];}
-  S.modal={type,id:id||null,draft};render();setTimeout(()=>$('modalForm')&&$('modalForm').querySelector('input,select')?.focus(),50);}
+  S.modal={type,id:id||null,draft,returnAction:trigger?.dataset.act};render();}
 function formData(form){return Object.fromEntries(new FormData(form).entries());}
 function openStudentImport() {
   if (!canEdit() || S.busy) return;
@@ -1123,6 +1129,13 @@ function closeModal(){
   stopCamera();
   S.modal=null;
   render();
+  if (m.returnAction) {
+    const trigger = Array.from(document.querySelectorAll('[data-act][data-type]')).find(button =>
+      button.dataset.act === m.returnAction && button.dataset.type === m.type &&
+      (button.dataset.id || null) === m.id
+    );
+    trigger?.focus({preventScroll:true});
+  }
   if(m.type==='studentImport')document.querySelector('[data-act="studentImport"]')?.focus();
   if(m.type==='scanner'){
     document.querySelector(`[data-act="scan"][data-direction="${m.direction}"]`)?.focus();
@@ -1414,6 +1427,7 @@ async function handleClick(e){const b=e.target.closest('[data-act]');if(!b)retur
   if(act==='overlay'){if(e.target===b)closeModal();return;}
   if(act==='menu'){S.menu=!S.menu;render();$('portalMenu')?.focus({preventScroll:true});return;}
   if(act==='nav'){
+    if (b.dataset.view === S.view && !S.menu) return;
     stopCamera();S.view=b.dataset.view;S.menu=false;S.modal=null;
     const day=todayLocal();
     if(role()==='monitor'&&S.view==='dashboard'&&S.data.day!==day){
@@ -1428,9 +1442,9 @@ async function handleClick(e){const b=e.target.closest('[data-act]');if(!b)retur
   if(act==='refresh'){if(await load(true))message('Dados atualizados.');return;}
   if(act==='logout'){await logout();return;}
   if(act==='password'){S.modal={type:'password',mandatory:false};render();$('modalTitle')?.focus();return;}
-  if(act==='new'){openModal(type,null);return;}
+  if(act==='new'){openModal(type,null,b);return;}
   if(act==='monitorSetup'){await openMonitorSetup();return;}
-  if(act==='edit'){openModal(type,id);return;}
+  if(act==='edit'){openModal(type,id,b);return;}
   if(act==='routeStudents'){
     S.filters={search:'',school:'',route:id,stop:''};S.view='students';S.menu=false;render();
     window.scrollTo(0,0);$('conteudo')?.focus({preventScroll:true});return;
@@ -1478,6 +1492,7 @@ async function handleClick(e){const b=e.target.closest('[data-act]');if(!b)retur
   if(act==='scanFile'){chooseScanPhoto();return;}
 }
 async function handleSubmit(e){const form=e.target;e.preventDefault();
+  if (S.busy || !form.isConnected) return;
   if(form.id==='loginForm'){
     if(S.busy)return;S.busy=true;const x=formData(form);render();
     try{
@@ -1618,8 +1633,60 @@ function handleChange(e){const target=e.target,id=target.id;
     S.modal.draft=draft;render();$(id)?.focus({preventScroll:true});
   }
 }
-function handleInput(e){if(e.target.id!=='searchStudents')return;const input=e.target,pos=input.selectionStart;S.filters.search=input.value;render();const next=$('searchStudents');if(next){next.focus();next.setSelectionRange(pos,pos);}}
-document.addEventListener('click',e=>{handleClick(e).catch(warn);});document.addEventListener('submit',e=>{handleSubmit(e).catch(warn);});document.addEventListener('change',handleChange);document.addEventListener('input',e=>{if(e.target.id!=='searchStudents')return;clearTimeout(window.rotasSearchTimer);window.rotasSearchTimer=setTimeout(()=>handleInput(e),120);});
+let studentSearchTimer;
+function queueStudentSearch(e) {
+  const input = e.target;
+  if (input.id !== 'searchStudents' || e.isComposing) return;
+  S.filters.search = input.value;
+  clearTimeout(studentSearchTimer);
+  studentSearchTimer = setTimeout(() => {
+    const results = $('studentResults');
+    if (!results || S.modal) return;
+    const items = filteredStudents();
+    results.innerHTML = studentResults(S.view === 'dashboard' ? items.slice(0, 12) : items);
+  }, 120);
+}
+document.addEventListener('click',e=>{handleClick(e).catch(warn);});
+document.addEventListener('submit', async e => {
+  const request = handleSubmit(e);
+  const button = e.submitter || e.target.querySelector('button[type="submit"]');
+  const showPending = S.busy && button?.isConnected && !button.disabled;
+  if (showPending) {
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+  }
+  try {
+    await request;
+  } catch (error) {
+    warn(error);
+  } finally {
+    if (showPending && button.isConnected) {
+      button.removeAttribute('aria-busy');
+      button.disabled = false;
+    }
+  }
+});
+document.addEventListener('change',handleChange);
+document.addEventListener('input',queueStudentSearch);
+document.addEventListener('compositionend',queueStudentSearch);
+
+const visualViewport = window.visualViewport;
+function syncDialogViewport() {
+  const style = document.documentElement.style;
+  // Pinch-zoom uses the normal layout viewport.
+  if (visualViewport.scale !== 1) {
+    style.removeProperty('--dialog-viewport-height');
+    style.removeProperty('--dialog-viewport-top');
+    return;
+  }
+  style.setProperty('--dialog-viewport-height', `${visualViewport.height}px`);
+  style.setProperty('--dialog-viewport-top', `${visualViewport.offsetTop}px`);
+}
+if (visualViewport) {
+  visualViewport.addEventListener('resize', syncDialogViewport);
+  visualViewport.addEventListener('scroll', syncDialogViewport);
+  syncDialogViewport();
+}
 document.addEventListener('keydown',e=>{
   if(e.key!=='Escape')return;
   if(S.modal&&!S.modal.mandatory)closeModal();

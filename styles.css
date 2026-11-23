@@ -4,6 +4,8 @@
   --site-width: 1440px;
   --gutter: clamp(16px, 3.4vw, 48px);
   --panel-radius: 8px;
+  --control-radius: 5px;
+  --interaction-ease: cubic-bezier(.2, .65, .35, 1);
   --navy: #071d41;
   --dark-ink: #fff;
   --dark-text: #d5e3fa;
@@ -456,7 +458,8 @@ main[tabindex="-1"]:focus { outline: none; }
 .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
 
 .btn, .icon-btn, .direction-btn {
-  transition: background-color .16s ease, color .16s ease, border-color .16s ease;
+  transition: background-color .18s var(--interaction-ease), color .18s var(--interaction-ease),
+    border-color .18s var(--interaction-ease);
 }
 
 .btn {
@@ -477,7 +480,14 @@ main[tabindex="-1"]:focus { outline: none; }
   text-align: center;
 }
 
-.btn svg { width: 18px; height: 18px; }
+.btn svg { flex: none; width: 18px; height: 18px; }
+.btn, .icon-btn, .direction-btn, .nav-btn, .monitor-dock button, .rotas-bottom-nav button {
+  touch-action: manipulation;
+}
+.btn:active:not(:disabled), .icon-btn:active:not(:disabled), .direction-btn:active:not(:disabled),
+.nav-btn:active:not(:disabled), .monitor-dock button:active:not(:disabled) {
+  opacity: .8;
+}
 .btn.small { min-height: 39px; padding: 7px 12px; font-size: .8125rem; }
 .btn.ghost { border-color: transparent; background: transparent; }
 .btn.danger { color: var(--danger); }
@@ -486,6 +496,7 @@ main[tabindex="-1"]:focus { outline: none; }
 .btn.danger:not(:disabled):hover { background: var(--danger-bg); }
 .btn.primary:not(:disabled):hover, .direction-ida:not(:disabled):hover { border-color: var(--blue-hover); background: var(--blue-hover); }
 .btn:disabled, .direction-btn:disabled { opacity: .58; }
+.btn[aria-busy="true"] { cursor: progress; }
 
 .icon-btn {
   display: grid;
@@ -566,7 +577,7 @@ main[tabindex="-1"]:focus { outline: none; }
   min-height: 44px;
   padding: 9px 11px;
   border: 1px solid var(--control-line);
-  border-radius: 5px;
+  border-radius: var(--control-radius);
   background: var(--surface);
   color: var(--ink);
   font-size: 1rem;
@@ -729,17 +740,22 @@ html:has(.modal-mask) { overflow: hidden; }
 .modal-mask {
   position: fixed;
   z-index: 50;
-  inset: 0;
+  inset: var(--dialog-viewport-top, 0px) 0 auto;
+  height: var(--dialog-viewport-height, 100vh);
+  height: var(--dialog-viewport-height, 100dvh);
   display: grid;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   place-items: center;
-  padding: 16px;
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+    max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
   background: var(--overlay);
 }
 
 .modal {
   width: min(590px, 100%);
-  max-height: calc(100vh - 32px);
-  max-height: calc(100dvh - 32px);
+  min-width: 0;
+  max-height: 100%;
+  overflow-wrap: anywhere;
   overflow: auto;
   overscroll-behavior: contain;
   padding: clamp(17px, 3.4vw, 27px);
@@ -1159,7 +1175,8 @@ html:has(.modal-mask) { overflow: hidden; }
   .list-actions { width: 100%; }
   .list-main { flex-basis: calc(100% - 50px); }
   .import-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .btn.small { min-height: 44px; }
+  .btn.small, .check-row { min-height: 44px; }
+  .check-row input { flex: none; }
 }
 
 @media (max-width: 440px) {
@@ -1175,9 +1192,9 @@ html:has(.modal-mask) { overflow: hidden; }
 }
 
 .nav-btn { transition: background-color .16s ease, color .16s ease; }
-.view-enter { animation: view-in .18s ease-out; }
+.view-enter { animation: view-in .18s var(--interaction-ease); }
 .dialog-enter > .modal-mask { animation: dialog-backdrop-in .15s ease-out; }
-.dialog-enter > .modal-mask > .modal { animation: view-in .18s ease-out; }
+.dialog-enter > .modal-mask > .modal { animation: view-in .18s var(--interaction-ease); }
 .scanner-notice { transition: background-color .16s ease, border-color .16s ease, color .16s ease; }
 
 .panel-loading { display: flex; align-items: center; gap: 9px; color: var(--text); }
@@ -1191,12 +1208,12 @@ html:has(.modal-mask) { overflow: hidden; }
   animation: panel-loading-spin .72s linear infinite;
 }
 
-@keyframes view-in { from { opacity: .78; transform: translateY(5px); } }
+@keyframes view-in { from { opacity: .88; transform: translateY(3px); } }
 @keyframes dialog-backdrop-in { from { opacity: 0; } }
 @keyframes panel-loading-spin { to { transform: rotate(1turn); } }
 
 @media (max-width: 870px) {
-  .menu-enter > .sidebar { animation: view-in .17s ease-out; }
+  .menu-enter > .sidebar { animation: view-in .18s var(--interaction-ease); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1307,14 +1324,21 @@ html:has(.modal-mask) { overflow: hidden; }
   .monitor-shell {
     --dock-clearance: calc(87px + env(safe-area-inset-bottom, 0px));
     grid-template-rows: auto 1fr;
-    grid-template-areas: "toolbar" "main";
     padding-bottom: var(--dock-clearance);
   }
 
+  .monitor-shell .crumb { display: flex; }
+  .monitor-call-shortcut + .crumb { display: none; }
+}
+
+@media screen {
+  .monitor-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "toolbar" "main";
+  }
   .monitor-shell .sidebar,
   .monitor-shell .mobile-menu,
   .monitor-shell .topright [data-act="password"] { display: none !important; }
-  .monitor-shell .crumb { display: flex; }
   .monitor-shell .monitor-call-shortcut {
     display: inline-flex;
     gap: 5px;
@@ -1325,7 +1349,6 @@ html:has(.modal-mask) { overflow: hidden; }
     background: var(--tint);
     color: var(--blue);
   }
-  .monitor-call-shortcut + .crumb { display: none; }
   .monitor-call-shortcut svg { width: 18px; height: 18px; }
 
   .monitor-dock {
@@ -1337,13 +1360,13 @@ html:has(.modal-mask) { overflow: hidden; }
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 2px;
     width: auto;
-    max-width: 490px;
+    max-width: 30rem;
     margin-inline: auto;
-    padding: 5px;
+    padding: 6px;
     border: 1px solid var(--line);
-    border-radius: 18px;
+    border-radius: 999px;
     background: var(--surface);
-    box-shadow: 0 6px 24px #071d4126;
+    box-shadow: 0 8px 28px #071d4140;
   }
   .monitor-dock button {
     display: grid;
@@ -1351,19 +1374,31 @@ html:has(.modal-mask) { overflow: hidden; }
     align-content: center;
     gap: 4px;
     min-width: 0;
-    min-height: 54px;
+    min-height: 52px;
     padding: 4px 1px;
     border: 0;
-    border-radius: 12px;
+    border-radius: 999px;
     background: transparent;
     color: var(--text);
-    font-size: .75rem;
+    font-size: .6875rem;
     font-weight: 650;
     line-height: 1.2;
     text-align: center;
     overflow-wrap: anywhere;
   }
-  .monitor-dock button[aria-current="page"],
-  .monitor-dock button:hover { background: var(--tint); color: var(--blue); }
-  body:has(.monitor-dock) #toast { bottom: calc(82px + env(safe-area-inset-bottom, 0px)); }
+  .monitor-dock button:hover { background: var(--tint); }
+  .monitor-dock button[aria-current="page"] { background: var(--blue); color: var(--on-blue); }
+  body:has(.monitor-shell) #toast { bottom: calc(82px + env(safe-area-inset-bottom, 0px)); }
+}
+
+@media screen and (min-width: 871px) {
+  body:has(.monitor-shell) > .site-footer { padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px)); }
+}
+
+
+@media screen and (prefers-reduced-motion: reduce) {
+  /* Also covers transforms applied by the compiled dock when the setting changes live. */
+  .rotas-bottom-nav button, .rotas-bottom-nav button > [aria-hidden="true"]:not(svg) {
+    transform: none !important;
+  }
 }
