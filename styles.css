@@ -1186,13 +1186,14 @@ html:has(.modal-mask) { overflow: hidden; }
 }
 
 @media (max-width: 440px) {
-  .direction-btn { padding-inline: 9px; }
+  .direction-btn { gap: 6px; padding-inline: 8px; }
+  .direction-icon { width: 26px; height: 26px; }
   .direction-arrow { display: none; }
 }
 
 @media (max-width: 360px) {
   .crumb { display: none; }
-  .boarding-directions { grid-template-columns: minmax(0, 1fr); gap: 7px; }
+  .boarding-directions { gap: 7px; }
   .direction-btn { min-height: 56px; }
   .scanner-actions, .scanner-manual form { grid-template-columns: minmax(0, 1fr); }
 }
@@ -1308,10 +1309,13 @@ html:has(.modal-mask) { overflow: hidden; }
 .monitor-home .boarding-list-link { min-height: 44px; border-radius: var(--monitor-control-radius); }
 .monitor-home .route-guide summary { min-height: 44px; padding-block: 9px; }
 
+@media (max-width: 440px) {
+  .monitor-home .direction-btn { padding-inline: 8px; }
+}
+
 @media (max-width: 460px) {
-  .monitor-home .boarding-directions { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .monitor-home .boarding-directions { gap: 8px; }
   .monitor-home .direction-btn { min-height: 56px; }
-  .monitor-home .direction-arrow { display: flex; }
 }
 
 .monitor-dock, .monitor-shell .monitor-call-shortcut { display: none; }
