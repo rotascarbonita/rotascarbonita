@@ -1294,3 +1294,76 @@ html:has(.modal-mask) { overflow: hidden; }
   .monitor-home .direction-btn { min-height: 56px; }
   .monitor-home .direction-arrow { display: flex; }
 }
+
+.monitor-dock, .monitor-shell .monitor-call-shortcut { display: none; }
+.monitor-profile { max-width: 480px; border-radius: 18px; }
+.monitor-profile-identity { display: flex; align-items: center; gap: 12px; overflow-wrap: anywhere; }
+.monitor-profile-identity strong { color: var(--heading); }
+.monitor-profile-identity p { margin: 2px 0 0; color: var(--text); font-size: .875rem; }
+.monitor-profile-actions { display: grid; gap: 8px; margin-top: 16px; }
+.monitor-profile-actions .btn { justify-content: flex-start; min-height: 44px; border-radius: 12px; }
+
+@media screen and (max-width: 870px) {
+  .monitor-shell {
+    --dock-clearance: calc(87px + env(safe-area-inset-bottom, 0px));
+    grid-template-rows: auto 1fr;
+    grid-template-areas: "toolbar" "main";
+    padding-bottom: var(--dock-clearance);
+  }
+
+  .monitor-shell .sidebar,
+  .monitor-shell .mobile-menu,
+  .monitor-shell .topright [data-act="password"] { display: none !important; }
+  .monitor-shell .crumb { display: flex; }
+  .monitor-shell .monitor-call-shortcut {
+    display: inline-flex;
+    gap: 5px;
+    min-height: 44px;
+    padding-inline: 10px;
+    border-color: var(--line);
+    border-radius: 12px;
+    background: var(--tint);
+    color: var(--blue);
+  }
+  .monitor-call-shortcut + .crumb { display: none; }
+  .monitor-call-shortcut svg { width: 18px; height: 18px; }
+
+  .monitor-dock {
+    position: fixed;
+    z-index: 30;
+    inset: auto max(10px, env(safe-area-inset-right, 0px))
+      max(8px, env(safe-area-inset-bottom, 0px)) max(10px, env(safe-area-inset-left, 0px));
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 2px;
+    width: auto;
+    max-width: 490px;
+    margin-inline: auto;
+    padding: 5px;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background: var(--surface);
+    box-shadow: 0 6px 24px #071d4126;
+  }
+  .monitor-dock button {
+    display: grid;
+    justify-items: center;
+    align-content: center;
+    gap: 4px;
+    min-width: 0;
+    min-height: 54px;
+    padding: 4px 1px;
+    border: 0;
+    border-radius: 12px;
+    background: transparent;
+    color: var(--text);
+    font-size: .75rem;
+    font-weight: 650;
+    line-height: 1.2;
+    text-align: center;
+    overflow-wrap: anywhere;
+  }
+  .monitor-dock button[aria-current="page"],
+  .monitor-dock button:hover { background: var(--tint); color: var(--blue); }
+  body:has(.monitor-dock) #toast { bottom: calc(82px + env(safe-area-inset-bottom, 0px)); }
+}
