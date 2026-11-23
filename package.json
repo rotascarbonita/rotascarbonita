@@ -1,0 +1,24 @@
+{
+  "name": "rotas-carbonita",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck && esbuild components/monitor-dock.tsx --bundle --minify --outfile=assets/monitor-dock.js && tailwindcss -i navbar.css -o assets/monitor-dock.css --minify"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "framer-motion": "^14.14.0",
+    "lucide-react": "^1.78.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "tailwind-merge": "^3.7.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.3.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "esbuild": "^0.28.2",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^7.0.2"
+  }
+}

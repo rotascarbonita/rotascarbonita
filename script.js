@@ -262,6 +262,7 @@ function canSee(name){if(name==='profile')return role()==='monitor';if(name==='u
 let renderedView='', renderedModalType='', renderedMenu=false;
 function render(){
   const app=$('app');
+  const reactDock=$('monitorDockReact');
   if(S.token&&(user()?.trocarSenha==='SIM'||user()?.exigeTroca))S.modal={type:'password',mandatory:true};
   const modalType=S.modal?.type||'';
   const openingDialog=Boolean(modalType&&modalType!==renderedModalType);
@@ -270,6 +271,8 @@ function render(){
   $('siteHeader')?.toggleAttribute('inert',Boolean(S.modal));
   $('siteFooter')?.toggleAttribute('inert',Boolean(S.modal));
 
+  if(reactDock)reactDock.hidden=!S.token||!S.data||role()!=='monitor'||Boolean(S.modal?.type==='password'&&!S.data?.schools);
+  reactDock?.toggleAttribute('inert',Boolean(S.modal));
   if(!S.token){S.view='';renderedView='';renderedMenu=false;app.innerHTML=loginHtml();return;}
   if(S.modal&&S.modal.type==='password'&&(!S.data||!S.data.schools)){
     app.innerHTML=`<main class="splash${openingDialog?' dialog-enter':''}" id="conteudo" tabindex="-1">${modalHtml()}</main>`;
@@ -287,6 +290,7 @@ function render(){
   if(!S.view||!canSee(S.view)){
     S.view=monitor&&window.matchMedia('(max-width: 870px)').matches?'attendance':'dashboard';
   }
+  if(monitor&&reactDock)reactDock.dataset.view=S.view;
   const enteringView=!S.loading&&S.view!==renderedView;
   const openingMenu=S.menu&&!renderedMenu;
   if(!S.loading)renderedView=S.view;
