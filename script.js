@@ -183,9 +183,9 @@ function startRotasInterface() {
 (function(){'use strict';
 const STORE={get:k=>{try{return sessionStorage.getItem(k)||''}catch(e){return ''}},set:(k,v)=>{try{sessionStorage.setItem(k,v)}catch(e){}},remove:k=>{try{sessionStorage.removeItem(k)}catch(e){}}};
 const S={token:window.rotasBackend.hasSession()?'authenticated':'',data:null,view:'',year:'',day:todayLocal(),sentido:'IDA',route:'',callSchool:'',callStop:'',filters:{search:'',school:'',route:'',stop:''},modal:null,busy:false,loading:false,loadError:'',menu:false,checking:false};
-const LABEL={profile:'Perfil',dashboard:'Visão geral',students:'Estudantes',schools:'Escolas',classes:'Turno',routes:'Rotas',stops:'Pontos',attendance:'Chamada',users:'Acessos',reports:'Relatórios'};
+const LABEL={profile:'Perfil',dashboard:'Visão geral',students:'Estudantes',schools:'Escolas',classes:'Turmas',routes:'Rotas',stops:'Pontos',attendance:'Chamada',users:'Acessos',reports:'Relatórios'};
 const MONITOR_DOCK=[['dashboard','home'],['students','people'],['reports','chart'],['profile','person']];
-const TYPE={student:'Estudante',school:'Escola',class:'Turno',route:'Rota',stop:'Ponto',user:'Usuário'};
+const TYPE={student:'Estudante',school:'Escola',class:'Turma',route:'Rota',stop:'Ponto',user:'Usuário'};
 const NAV=[['dashboard','home'],['students','people'],['schools','school'],['routes','route'],['stops','pin'],['attendance','checklist'],['reports','chart'],['users','lock']];
 const $=id=>document.getElementById(id);
 const E=x=>String(x===undefined||x===null?'':x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -194,6 +194,8 @@ const find=(key,id)=>a(key).find(r=>r.id===id);
 const val=(key,id,prop='nome')=>(find(key,id)||{})[prop]||'—';
 const initials=n=>String(n||'').trim().split(/\s+/).slice(0,2).map(x=>x[0]).join('').toUpperCase();
 const DIRECTION={IDA:'Para Escola',VOLTA:'Para Casa'};
+const STUDENT_SHIFTS=[['MANHA','Manhã'],['TARDE','Tarde']];
+function supportsStudentShifts(){return Boolean(S.data?.studentFeatures||S.data?.studentFeaturesVersion);}
 const isActive=x=>x&&x.ativo!==false&&x.ativo!=='false'&&x.ativo!=='NAO';
 let loadRequest=0;
 function todayLocal(){
@@ -383,7 +385,7 @@ function filtersHtml(){const f=S.filters,allowedSchools=a('schools'),routes=a('r
   <select class="control" id="filterStop" aria-label="Filtrar ponto"><option value="">Todos os pontos</option>${options(stops,f.stop)}</select></div></div>`;}
 function options(items,selected){return items.map(x=>`<option value="${E(x.id)}" ${x.id===selected?'selected':''}>${E(x.nome)}</option>`).join('');}
 function badgeSearchKey(value){return String(value||'').toUpperCase().replace(/[\s-]/g,'');}
-function filteredStudents(){const f=S.filters,term=f.search.trim().toLowerCase();return a('students').filter(x=>(!f.school||x.escolaId===f.school)&&(!f.route||x.rotaId===f.route)&&(!f.stop||x.pontoId===f.stop)&&(!term||x.nome.toLowerCase().includes(term)||(badgeSearchKey(term).length>=3&&badgeSearchKey(x.crachaCodigo).includes(badgeSearchKey(term)))||val('classes',x.turnoId).toLowerCase().includes(term))).sort((x,y)=>x.nome.localeCompare(y.nome,'pt-BR'));}
+function filteredStudents(){const f=S.filters,term=f.search.trim().toLowerCase();return a('students').filter(x=>(!f.school||x.escolaId===f.school)&&(!f.route||x.rotaId===f.route)&&(!f.stop||x.pontoId===f.stop)&&(!term||x.nome.toLowerCase().includes(term)||(badgeSearchKey(term).length>=3&&badgeSearchKey(x.crachaCodigo).includes(badgeSearchKey(term)))||val('classes',x.turmaId).toLowerCase().includes(term))).sort((x,y)=>x.nome.localeCompare(y.nome,'pt-BR'));}
 function studentCard(s){
   const pending=!s.rotaId;
   const editButton=`<button type="button" class="link-btn" data-act="edit" data-type="student" data-id="${E(s.id)}" aria-label="${E((pending?'Definir rota e ponto de ':'Alterar rota ou ponto de ')+s.nome)}">${pending?'Definir rota e ponto':'Alterar rota ou ponto'}</button>`;
@@ -422,8 +424,8 @@ function studentsScreen(){
 function subtitles(type,obj){switch(type){case 'school':return 'Escola ativa';case 'class':return val('schools',obj.escolaId)+' · '+obj.ano;case 'route':return [routeSchoolNames(obj),obj.veiculo,!isActive(obj)?'Inativa':''].filter(Boolean).join(' · ');case 'stop':return val('routes',obj.rotaId)+' · Ordem '+obj.ordem;default:return '';}}
 function listScreen(type,key){
   const data=a(key);
-  const title={school:'Escolas',class:'Turnos',route:'Rotas',stop:'Pontos'}[type];
-  const desc={school:'Unidades da rede municipal de educação.',class:'Turnos vinculadas às escolas e ao ano letivo.',route:'Consulte os trajetos e as escolas atendidas.',stop:'Pontos de embarque e desembarque de cada rota.'}[type];
+  const title={school:'Escolas',class:'Turmas',route:'Rotas',stop:'Pontos'}[type];
+  const desc={school:'Unidades da rede municipal de educação.',class:'Turmas vinculadas às escolas e ao ano letivo.',route:'Consulte os trajetos e as escolas atendidas.',stop:'Pontos de embarque e desembarque de cada rota.'}[type];
   const allowAdd=canEdit()&&(type!=='stop'||a('routes').some(route=>isActive(route)&&canEditRoute(route)));
   const allowMerge=type==='route'&&role()==='secretaria'&&data.filter(isActive).length>1;
   const rows=data.map((item,index)=>{
@@ -629,7 +631,7 @@ function reportsScreen(){
       <div class="table-wrap"><table class="data-table"><thead><tr><th>Rota</th><th>Total de estudantes ativos</th><th>Estudantes por escola</th><th>Pontos</th></tr></thead>
       <tbody>${rows}</tbody></table></div></div>
     <div class="panel"><div class="panel-head"><div><div class="panel-title">Aguardando definição de rota</div><div class="panel-sub">${pending.length} estudantes sem rota</div></div></div>
-      ${pending.length?pending.map(s=>`<div class="list-row"><div class="list-main"><b>${E(s.nome)}</b><small>${E(val('schools',s.escolaId))} · ${E(val('classes',s.turnoId))}</small></div></div>`).join(''):empty('Todos os estudantes estão vinculados','Não há pendências de rota entre os estudantes visíveis.')}</div>
+      ${pending.length?pending.map(s=>`<div class="list-row"><div class="list-main"><b>${E(s.nome)}</b><small>${E(val('schools',s.escolaId))} · ${E(val('classes',s.turmaId))}</small></div></div>`).join(''):empty('Todos os estudantes estão vinculados','Não há pendências de rota entre os estudantes visíveis.')}</div>
     ${role()==='secretaria'?`<div class="panel"><div class="panel-head"><div><div class="panel-title">Histórico recente de alterações</div><div class="panel-sub">Últimos 80 eventos registrados</div></div></div>
       <div class="table-wrap"><table class="data-table"><thead><tr><th>Data</th><th>Usuário</th><th>Ação</th><th>Tipo</th></tr></thead><tbody>${a('audit').map(x=>`<tr><td>${E(x.data.replace('T',' ').slice(0,19))}</td><td>${E(val('users',x.usuarioId,'nome'))}</td><td>${E(x.acao)}</td><td>${E(x.entidade)}</td></tr>`).join('')}</tbody></table></div></div>`:''}`;
 }
@@ -843,7 +845,7 @@ function modalHtml(){const m=S.modal;if(!m)return '';let body='',title='',sub=''
     body=`<form id="modalForm" data-form="replaceBadge"><p>Crachá atual <strong>${E(m.currentCode)}</strong></p><p>O código e o QR antigos serão cancelados. O novo crachá terá outro código. As chamadas já registradas serão preservadas.</p>${modalActions(false,'Cancelar antigo e emitir novo')}</form>`;
   }
   else if(m.type==='year'){
-title='Novo ano letivo';sub='Os estudantes antigos permanecem no histórico. Cadastre turnos, rotas e estudantes para o novo ano.';body=`<form id="modalForm" data-form="year">${field('year','Ano letivo',String(Number(S.year)+1),'Ex.: 2027','pattern="20[0-9]{2}" required')}${modalActions()}</form>`;}
+title='Novo ano letivo';sub='Os estudantes antigos permanecem no histórico. Cadastre turmas, rotas e estudantes para o novo ano.';body=`<form id="modalForm" data-form="year">${field('year','Ano letivo',String(Number(S.year)+1),'Ex.: 2027','pattern="20[0-9]{2}" required')}${modalActions()}</form>`;}
   else if(m.type==='assign'){title='Vincular rotas';sub=val('users',m.id);body=assignmentDialog(m);}
   else if(m.type==='monitorSetup'){title='Configurar Leites e Simão';sub='Monitoras e pontos de referência · 2026';body=monitorSetupDialog(m);}
   else if(m.type==='mergeRoutes'){title='Unificar rotas';sub='Rota principal · '+routeLabel(find('routes',m.id));body=mergeRoutesDialog(m);}
@@ -858,7 +860,6 @@ title='Novo ano letivo';sub='Os estudantes antigos permanecem no histórico. Cad
   else{const type=m.type,item=m.draft||{},edit=!!m.id;title=(edit?'Editar ':'Cadastrar ')+TYPE[type].toLowerCase();sub=type==='user'?'Defina as permissões do e-mail cadastrado no Supabase.':'Os dados serão salvos e atualizados nos demais acessos.';submit=edit?'Salvar alterações':'Cadastrar';
     const schools=a('schools'), schoolId=role()==='escola'?user().escolaId:item.escolaId||'';
     const routeId=item.rotaId||'';
-    const cls=a('classes').filter(x=>x.escolaId===schoolId);
     const routes=a('routes').filter(route=>routeSchoolIds(route).includes(schoolId)&&(isActive(route)||route.id===routeId));
     const points=a('stops').filter(point=>point.rotaId===routeId&&(isActive(point)||point.id===item.pontoId)).sort(compareStops);
     if(type==='student'&&role()==='monitor'&&edit&&!find('students',m.id)?.rotaId){
@@ -875,7 +876,7 @@ title='Novo ano letivo';sub='Os estudantes antigos permanecem no histórico. Cad
       body=`<form id="modalForm" data-form="student"><div class="tip"><b>${E(item.nome)}</b><div>${E(val('schools',item.escolaId))}</div></div>${selectField('rotaId','Rota do estudante',routes,item.rotaId,'Escolha a rota','required data-cascade="yes"')}${selectField('pontoId','Ponto de embarque',points,item.pontoId,'Selecione o ponto','required')}${guidance}${stopWarning}${modalActions()}</form>`;
     }else{
       if(type==='school')body=field('nome','Nome da escola',item.nome,'Ex.: Escola Municipal…','required maxlength="140"');
-      if(type==='class')body=(role()==='secretaria'?selectField('escolaId','Escola',schools,schoolId,'Selecione a escola','required'):'')+field('nome','Turno',item.nome,'Ex.: Manhã','required maxlength="140"');
+      if(type==='class')body=(role()==='secretaria'?selectField('escolaId','Escola',schools,schoolId,'Selecione a escola','required'):'')+field('nome','Nome da turma',item.nome,'Ex.: 5º ano A','required maxlength="140"');
       if(type==='route'){
         body=field('nome','Nome da rota',item.nome,'Ex.: Rota Rural 01','required maxlength="140"')+
           field('veiculo','Veículo',item.veiculo,'Ex.: Ônibus 02','maxlength="140"')+
@@ -889,24 +890,22 @@ title='Novo ano letivo';sub='Os estudantes antigos permanecem no histórico. Cad
       if (type === 'student') {
         const previous = edit ? find('students', m.id) : null;
         const monitor = role()==='monitor';
-        const classRequired = (!edit && !monitor && !S.data?.studentFeatures) || previous?.turnoId;
+        const shifts = item.turnos ?? [];
+        const shiftField = `<fieldset class="assignment-field">
+          <legend>Turno</legend>
+          ${STUDENT_SHIFTS.map(([value,label])=>`<label class="check-row"><input type="checkbox" name="turnos" value="${value}" ${shifts.includes(value)?'checked':''}> ${label}</label>`).join('')}
+        </fieldset>`;
         const guardianRequired = !edit || previous?.responsavel;
         body = (role() !== 'escola' ? selectField('escolaId', 'Escola', schools, schoolId, 'Selecione uma escola', 'required data-cascade="yes"') : '')
           + field('nome', 'Nome completo do estudante', item.nome, 'Nome e sobrenome', 'required')
-          + selectField('turnoId', 'Turno', cls, item.turnoId, classRequired ? 'Selecione o turno' : 'A definir', classRequired ? 'required' : '')
+          + shiftField
           + selectField('rotaId', 'Rota', routes, item.rotaId, 'A definir', 'data-cascade="yes"'+(monitor?' required':''))
           + field('logradouro', 'Logradouro', item.logradouro, 'Rua, avenida ou localidade', 'maxlength="200"')
           + selectField('pontoId', 'Ponto', points, item.pontoId, 'A definir', monitor&&(!edit||previous?.pontoId||previous?.rotaId!==routeId)?'required':'')
           + field('nomeMae', 'Nome completo da mãe', item.nomeMae, 'Nome e sobrenome', 'maxlength="140"' + (!edit || previous?.nomeMae ? ' required' : ''))
           + field('nomePai', 'Nome completo do pai (opcional)', item.nomePai, 'Nome e sobrenome', 'maxlength="140"')
           + field('responsavel', 'Responsável', item.responsavel, 'Nome do responsável', guardianRequired ? 'required' : '')
-          + field('celular', 'Celular do responsável', item.celular, '(38) 99999-9999', !edit&&S.data?.studentFeatures?'type="tel" required':'type="tel"');
-        if(!edit&&S.data?.studentFeatures){
-          body+=`<fieldset class="assignment-field"><legend>Turnos do estudante</legend>
-            <label class="check-row"><input type="checkbox" name="turnoNovoManha" value="MANHA" ${item.turnoNovoManha?'checked':''}> Manhã</label>
-            <label class="check-row"><input type="checkbox" name="turnoNovoTarde" value="TARDE" ${item.turnoNovoTarde?'checked':''}> Tarde</label>
-          </fieldset>`;
-        }
+          + field('celular', 'Celular do responsável', item.celular, '(38) 99999-9999', !edit&&supportsStudentShifts()?'type="tel" required':'type="tel"');
       }
       if(type==='user')body=field('nome','Nome completo',item.nome,'Nome do usuário','required')
         +field('email','E-mail cadastrado',item.email,'voce@exemplo.com','type="email" maxlength="254" required autocapitalize="none"'+(edit&&item.email?' readonly':''))
@@ -924,9 +923,9 @@ function csvCell(v){const s=String(v===undefined?'':v);const safe=/^[=+@\-]/.tes
 function exportCSV(what){let headers=[],rows=[];
   if(what==='students'){
     const showAddress = canEdit();
-    headers=['Estudante','Código do crachá','Escola','Turno','Rota','Ponto','Responsável','Celular','Ano'];
+    headers=['Estudante','Código do crachá','Escola','Turma','Rota','Ponto','Responsável','Celular','Ano'];
     if (showAddress) headers.push('Logradouro');
-    rows=filteredStudents().map(s=>[s.nome,s.crachaCodigo||'',val('schools',s.escolaId),val('classes',s.turnoId),val('routes',s.rotaId),val('stops',s.pontoId),s.responsavel,s.celular,s.ano,...(showAddress?[s.logradouro||'']:[])]);
+    rows=filteredStudents().map(s=>[s.nome,s.crachaCodigo||'',val('schools',s.escolaId),val('classes',s.turmaId),val('routes',s.rotaId),val('stops',s.pontoId),s.responsavel,s.celular,s.ano,...(showAddress?[s.logradouro||'']:[])]);
   }
   else if(what==='calls'){
     headers=['Estudante','Escola','Rota','Ponto','Data','Sentido','Situação','Registrado em','Origem'];
@@ -1566,17 +1565,18 @@ async function handleSubmit(e){const form=e.target;e.preventDefault();
     await mutate('save',{type:'student',year:student.ano,item:{id:m.id,rotaId:x.rotaId,pontoId:x.pontoId}},feedback);
     return;
   }
-  if(what==='student'&&!m.id&&S.data?.studentFeatures){
-    x.turnos=[x.turnoNovoManha,x.turnoNovoTarde].filter(Boolean);
-    if(!x.turnos.length){message('Selecione pelo menos um turno.',true);return;}
-    x.contatosResponsaveis=[{nome:x.responsavel,telefone:x.celular}];
-    delete x.turnoNovoManha;
-    delete x.turnoNovoTarde;
-  }
-  if(what==='student'&&m.id&&S.data?.studentFeatures){
-    const previous=find('students',m.id);
+  if(what==='student'){
+    const shifts=new FormData(form).getAll('turnos');
+    const previous=m.id?find('students',m.id):null;
+    delete x.turnos;
+    if((!m.id||previous?.turnos?.length)&&!shifts.length){message('Selecione pelo menos um turno.',true);return;}
+    if(shifts.length){
+      if(!supportsStudentShifts()){message('O banco precisa da atualização de turnos para salvar este cadastro.',true);return;}
+      x.turnos=shifts;
+    }
+    if(!m.id)x.contatosResponsaveis=[{nome:x.responsavel,telefone:x.celular}];
     const contacts=previous?.contatosResponsaveis||[];
-    if(previous&&(x.responsavel!==(previous.responsavel||'')||x.celular!==(previous.celular||''))&&(contacts.length||x.celular.trim())){
+    if(supportsStudentShifts()&&previous&&(x.responsavel!==(previous.responsavel||'')||x.celular!==(previous.celular||''))&&(contacts.length||x.celular.trim())){
       x.contatosResponsaveis=[{...contacts[0],nome:x.responsavel,telefone:x.celular},...contacts.slice(1)];
     }
   }
@@ -1606,12 +1606,8 @@ function handleChange(e){const target=e.target,id=target.id;
   if(target.dataset.cascade&&S.modal){
     const form=$('modalForm');if(!form)return;
     const draft={...S.modal.draft,...formData(form)};
-    if(form.elements.turnoNovoManha){
-      draft.turnoNovoManha=form.elements.turnoNovoManha.checked;
-      draft.turnoNovoTarde=form.elements.turnoNovoTarde.checked;
-    }
+    if(form.elements.namedItem('turnos'))draft.turnos=new FormData(form).getAll('turnos');
     if(target.name==='escolaId'){
-      draft.turnoId='';
       if(!routeSchoolIds(find('routes',draft.rotaId)).includes(draft.escolaId)){draft.rotaId='';draft.pontoId='';}
     }
     if(target.name==='rotaId')draft.pontoId='';
