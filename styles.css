@@ -3,8 +3,13 @@
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
   --site-width: 1440px;
   --gutter: clamp(16px, 3.4vw, 48px);
-  --panel-radius: 8px;
-  --control-radius: 5px;
+  --panel-radius: 10px;
+  --monitor-panel-radius: 16px;
+  --control-radius: 8px;
+  --monitor-control-radius: 12px;
+  --card-padding: 16px;
+  --panel-padding: clamp(16px, 2.2vw, 24px);
+  --section-gap: 16px;
   --interaction-ease: cubic-bezier(.2, .65, .35, 1);
   --navy: #071d41;
   --dark-ink: #fff;
@@ -238,7 +243,7 @@ main[tabindex="-1"]:focus { outline: none; }
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface);
-  box-shadow: 0 10px 30px #071d410c;
+  box-shadow: 0 6px 20px #071d410a;
 }
 
 .auth-intro {
@@ -480,7 +485,8 @@ main[tabindex="-1"]:focus { outline: none; }
   text-align: center;
 }
 
-.btn svg { flex: none; width: 18px; height: 18px; }
+.btn > svg, .icon-btn > svg { display: block; flex: none; }
+.btn > svg { width: 18px; height: 18px; }
 .btn, .icon-btn, .direction-btn, .nav-btn, .monitor-dock button, .rotas-bottom-nav button {
   touch-action: manipulation;
 }
@@ -522,7 +528,7 @@ main[tabindex="-1"]:focus { outline: none; }
   background: var(--surface);
 }
 
-.stat, .student-card { padding: 15px; }
+.stat, .student-card { padding: var(--card-padding); }
 
 .stat-head {
   display: flex;
@@ -550,7 +556,7 @@ main[tabindex="-1"]:focus { outline: none; }
 
 .panel {
   margin-block-end: 16px;
-  padding: clamp(15px, 2.2vw, 24px);
+  padding: var(--panel-padding);
 }
 
 .panel-head {
@@ -559,7 +565,7 @@ main[tabindex="-1"]:focus { outline: none; }
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 10px 14px;
-  margin-block-end: 14px;
+  margin-block-end: var(--section-gap);
 }
 
 .panel-title { margin: 0; color: var(--heading); font-size: 1.125rem; font-weight: 800; line-height: 1.3; }
@@ -758,15 +764,15 @@ html:has(.modal-mask) { overflow: hidden; }
   overflow-wrap: anywhere;
   overflow: auto;
   overscroll-behavior: contain;
-  padding: clamp(17px, 3.4vw, 27px);
+  padding: var(--panel-padding);
   border: 1px solid var(--line);
   border-top: 4px solid var(--blue);
   border-radius: var(--panel-radius);
   background: var(--surface);
-  box-shadow: 0 10px 32px #0003;
+  box-shadow: 0 8px 24px #071d4126;
 }
 
-.modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-block-end: 16px; }
+.modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-block-end: var(--section-gap); }
 .modal-head > div { min-width: 0; overflow-wrap: anywhere; }
 
 .modal-head h2 {
@@ -777,7 +783,7 @@ html:has(.modal-mask) { overflow: hidden; }
 }
 
 .modal-head p { margin: 0; color: var(--text); font-size: .875rem; }
-.modal-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 13px; padding-top: 14px; border-top: 1px solid var(--line); }
+.modal-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: var(--section-gap); padding-top: var(--section-gap); border-top: 1px solid var(--line); }
 
 .tip {
   margin: 0 0 13px;
@@ -1258,11 +1264,8 @@ html:has(.modal-mask) { overflow: hidden; }
   letter-spacing: -.035em;
 }
 
-.monitor-home .monitor-grid > .panel { min-width: 0; border-radius: 18px; }
-.monitor-home .boarding-panel {
-  padding: clamp(14px, 3vw, 24px);
-  border-top: 1px solid var(--line);
-}
+.monitor-home .monitor-grid > .panel, .monitor-profile { border-radius: var(--monitor-panel-radius); }
+.monitor-home .boarding-panel { border-top: 1px solid var(--line); }
 .monitor-route-context {
   display: flex;
   flex-wrap: wrap;
@@ -1270,12 +1273,11 @@ html:has(.modal-mask) { overflow: hidden; }
   gap: 8px 12px;
   margin-bottom: 16px;
   padding: 10px 12px;
-  border-radius: 12px;
+  border-radius: var(--monitor-control-radius);
   background: var(--tint);
 }
 .monitor-route-context .boarding-route { flex: 1 1 160px; }
 .monitor-route-context .boarding-route-fixed { padding: 0; border: 0; background: transparent; }
-.monitor-route-context .control { min-height: 44px; border-radius: 9px; }
 .monitor-shift { color: var(--heading); font-size: .8125rem; font-weight: 650; }
 
 .monitor-home .boarding-panel > .panel-title { margin-bottom: 9px; }
@@ -1296,14 +1298,14 @@ html:has(.modal-mask) { overflow: hidden; }
   margin-top: 14px;
   padding: 10px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--monitor-control-radius);
   background: var(--canvas);
   overflow-wrap: anywhere;
 }
 .latest-boarding-icon { display: grid; flex: none; place-items: center; color: var(--blue); }
 .latest-boarding h3 { margin: 0; color: var(--heading); font-size: .875rem; }
 .latest-boarding p { margin: 2px 0 0; color: var(--text); font-size: .8125rem; }
-.monitor-home .boarding-list-link { min-height: 44px; border-radius: 12px; }
+.monitor-home .boarding-list-link { min-height: 44px; border-radius: var(--monitor-control-radius); }
 .monitor-home .route-guide summary { min-height: 44px; padding-block: 9px; }
 
 @media (max-width: 460px) {
@@ -1313,12 +1315,12 @@ html:has(.modal-mask) { overflow: hidden; }
 }
 
 .monitor-dock, .monitor-shell .monitor-call-shortcut { display: none; }
-.monitor-profile { max-width: 480px; border-radius: 18px; }
+.monitor-profile { max-width: 480px; }
 .monitor-profile-identity { display: flex; align-items: center; gap: 12px; overflow-wrap: anywhere; }
 .monitor-profile-identity strong { color: var(--heading); }
 .monitor-profile-identity p { margin: 2px 0 0; color: var(--text); font-size: .875rem; }
 .monitor-profile-actions { display: grid; gap: 8px; margin-top: 16px; }
-.monitor-profile-actions .btn { justify-content: flex-start; min-height: 44px; border-radius: 12px; }
+.monitor-profile-actions .btn { justify-content: flex-start; min-height: 44px; border-radius: var(--monitor-control-radius); }
 
 @media screen and (max-width: 870px) {
   .monitor-shell {
@@ -1345,7 +1347,7 @@ html:has(.modal-mask) { overflow: hidden; }
     min-height: 44px;
     padding-inline: 10px;
     border-color: var(--line);
-    border-radius: 12px;
+    border-radius: var(--monitor-control-radius);
     background: var(--tint);
     color: var(--blue);
   }
@@ -1363,16 +1365,13 @@ html:has(.modal-mask) { overflow: hidden; }
     max-width: 30rem;
     margin-inline: auto;
     padding: 6px;
-    border: 1px solid var(--line);
     border-radius: 999px;
     background: var(--surface);
-    box-shadow: 0 8px 28px #071d4140;
   }
   .monitor-dock button {
     display: grid;
     justify-items: center;
     align-content: center;
-    gap: 4px;
     min-width: 0;
     min-height: 52px;
     padding: 4px 1px;
@@ -1385,6 +1384,17 @@ html:has(.modal-mask) { overflow: hidden; }
     line-height: 1.2;
     text-align: center;
     overflow-wrap: anywhere;
+  }
+  .monitor-dock, .rotas-bottom-nav--fixed {
+    border: 1px solid var(--line);
+    box-shadow: 0 4px 14px #071d4124, 0 1px 3px #071d410d;
+  }
+  .monitor-dock button, .rotas-bottom-nav--fixed button { gap: 5px; }
+  .monitor-dock button > svg, .rotas-bottom-nav--fixed button > svg {
+    display: block;
+    flex: none;
+    width: 21px;
+    height: 21px;
   }
   .monitor-dock button:hover { background: var(--tint); }
   .monitor-dock button[aria-current="page"] { background: var(--blue); color: var(--on-blue); }
