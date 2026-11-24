@@ -297,6 +297,45 @@ function canManageStudent(student){
 function canEditRoute(route){return Boolean(route&&(role()==='secretaria'||(role()==='escola'&&!route.compartilhada)));}
 function canSee(name){if(name==='profile')return role()==='monitor';if(name==='users'||name==='schools')return role()==='secretaria';if(role()==='monitor')return ['dashboard','students','attendance','reports'].includes(name);return true;}
 let renderedView='', renderedModalType='', renderedMenu=false, closingDialog=false;
+let renderedDisclosureContext='', renderedDisclosureModal=null;
+function disclosureContext(){return JSON.stringify([role(),S.view,S.year,S.day]);}
+function disclosureStates(root){
+  return new Map([...(root?.querySelectorAll?.('details[data-disclosure]')||[])]
+    .map(detail=>[detail.dataset.disclosure,detail.open]));
+}
+function syncDisclosure(detail){
+  const body=detail.lastElementChild;
+  if(!detail.open&&body.contains(document.activeElement))detail.firstElementChild.focus({preventScroll:true});
+  body.inert=!detail.open;
+}
+function restoreDisclosures(root,states){
+  for(const detail of root?.querySelectorAll('details[data-disclosure]')||[]){
+    const key=detail.dataset.disclosure;
+    if(states.has(key))detail.open=states.get(key);
+    syncDisclosure(detail);
+  }
+}
+function focusDisclosure(root,key){
+  const detail=[...root.querySelectorAll('details[data-disclosure]')].find(item=>item.dataset.disclosure===key);
+  detail?.firstElementChild.focus({preventScroll:true});
+}
+function disclosure(key,label,body,{open=false,className='',id=''}={}){
+  return `<details class="disclosure ${className}" data-disclosure="${E(key)}" ${id?`id="${E(id)}"`:''} ${open?'open':''}>
+    <summary><span class="disclosure-label">${label}</span></summary>
+    <div class="disclosure-body" ${open?'':'inert'}><div class="disclosure-inner">${body}</div></div>
+  </details>`;
+}
+document.addEventListener('toggle',event=>{
+  if(event.target.matches?.('details[data-disclosure]'))syncDisclosure(event.target);
+},true);
+document.addEventListener('click',event=>{
+  const detail=event.target.closest?.('.disclosure > summary')?.parentElement;
+  // Prevent focus from entering a collapsing panel before the native toggle event.
+  if(detail?.open&&!event.defaultPrevented){
+    if(detail.lastElementChild.contains(document.activeElement))detail.firstElementChild.focus({preventScroll:true});
+    detail.lastElementChild.inert=true;
+  }
+});
 function render(){
   if(closingDialog&&S.token)return;
   const app=$('app');
@@ -306,7 +345,7 @@ function render(){
   const modalType=S.modal?.type||'';
   const openingDialog=Boolean(modalType&&modalType!==renderedModalType);
   renderedModalType=modalType;
-  const previousModal = !openingDialog && app.querySelector('.modal');
+  const previousModal = openingDialog ? null : app.querySelector('.modal');
   const modalScroll = previousModal?.scrollTop ?? 0;
   const dialogOpen=S.modal?'inert':'';
   $('siteHeader')?.toggleAttribute('inert',Boolean(S.modal));
@@ -317,7 +356,7 @@ function render(){
     dock.hidden=!showDock;
     dock.toggleAttribute('inert',Boolean(S.modal));
   }
-  if(!S.token){S.view='';renderedView='';renderedMenu=false;app.innerHTML=loginHtml();return;}
+  if(!S.token){S.view='';renderedView='';renderedMenu=false;renderedDisclosureContext='';renderedDisclosureModal=null;app.innerHTML=loginHtml();return;}
   if(S.modal&&S.modal.type==='password'&&(!S.data||!S.data.schools)){
     app.innerHTML=`<main class="splash${openingDialog?' dialog-enter':''}" id="conteudo" tabindex="-1">${modalHtml()}</main>`;
     $('modalTitle')?.focus();
@@ -333,9 +372,15 @@ function render(){
   }
   if(monitor)syncMonitorDock(reactDock,fallbackDock);
   const previousMain=app.querySelector('.main');
+  const context=disclosureContext();
+  const panelStates=disclosureStates(context===renderedDisclosureContext?previousMain:null);
+  const modalStates=disclosureStates(S.modal&&S.modal.type!=='scanner'&&S.modal===renderedDisclosureModal?previousModal:null);
+  renderedDisclosureContext=context;
+  renderedDisclosureModal=S.modal;
   const active=document.activeElement;
   const mainFocused=previousMain&&previousMain===active;
   const focusedId=app.contains(active)?active.id:'';
+  const focusedSummary=active.matches?.('.disclosure > summary')?active.parentElement.dataset.disclosure:'';
   const sameView=S.view===renderedView;
   const mainScroll=sameView?previousMain?.scrollTop??0:0;
   const enteringView=hasSnapshot()&&S.view!==renderedView;
@@ -373,15 +418,19 @@ function render(){
     ${S.modal?modalHtml():''}
   </div>`;
   const main=$('conteudo');
+  restoreDisclosures(main,panelStates);
+  restoreDisclosures(app.querySelector('.modal'),modalStates);
   main.scrollTop=mainScroll;
   if(!S.modal&&sameView){
     if(mainFocused)main.focus({preventScroll:true});
     else if(focusedId)$(focusedId)?.focus({preventScroll:true});
+    else if(focusedSummary)focusDisclosure(main,focusedSummary);
   }
   updateLoadFeedback();
   if (S.modal) {
     app.querySelector('.modal').scrollTop = modalScroll;
     if (openingDialog) $('modalTitle')?.focus({preventScroll:true});
+    else if(focusedSummary&&modalStates.has(focusedSummary))focusDisclosure(app.querySelector('.modal'),focusedSummary);
   }
   if(S.modal?.type==='assign')syncAssignmentForm($('modalForm'));
   if(S.modal?.mandatory)$('modalTitle')?.focus();
@@ -442,26 +491,47 @@ function paintSnapshot(reveal=false){
   const focusId=area.contains(active)?active.id:'';
   const template=document.createElement('template');
   template.innerHTML=snapshotContent();
-  const oldSections=[...area.children], newSections=[...template.content.children];
-  for(const [index,next] of newSections.entries()){
-    const previous=oldSections[index];
-    if(!previous){area.append(next);continue;}
-    if(previous.id==='studentFilters'&&next.id==='studentFilters'){
-      syncStudentFilters();
-    }else if(!previous.isEqualNode(next)){
-      previous.replaceWith(next);
-    }
-  }
-  for(const previous of oldSections.slice(newSections.length))previous.remove();
+  const context=disclosureContext();
+  restoreDisclosures(template.content,disclosureStates(context===renderedDisclosureContext?area:null));
+  renderedDisclosureContext=context;
+  patchSections(area,template.content);
   area.classList.toggle('snapshot-reveal',reveal);
   announceStudentResults();
   updateLoadFeedback();
-  if(!active.isConnected){
+  if(!active.isConnected||document.activeElement!==active){
     const nextFocus=focusId&&$(focusId);
-    (nextFocus||main).focus({preventScroll:true});
+    (nextFocus||(active.isConnected?active:main)).focus({preventScroll:true});
   }
   if(main.scrollTop!==scrolled)main.scrollTop=scrolled;
   if(window.scrollY!==windowScroll)window.scrollTo(0,windowScroll);
+}
+function patchSections(container,source){
+  const oldSections=[...container.children], newSections=[...source.children];
+  const cards=container.matches('.cards')?new Map(oldSections.map(card=>[card.dataset.studentId,card])):null;
+  const retained=new Set();
+  for(const [index,next] of newSections.entries()){
+    const previous=cards?cards.get(next.dataset.studentId):oldSections[index];
+    let node=next;
+    if(previous?.id==='studentFilters'&&next.id==='studentFilters'){
+      syncStudentFilters();
+      node=previous;
+    }else if(previous?.isEqualNode(next)){
+      node=previous;
+    }else if(previous?.matches('summary')&&next.matches('summary')){
+      previous.replaceChildren(...next.childNodes);
+      node=previous;
+    }else if(previous&&(
+      (next.dataset.disclosure&&previous.dataset.disclosure===next.dataset.disclosure&&previous.open===next.open)||
+      (previous.className===next.className&&previous.id===next.id&&
+        previous.matches('#studentResults,.cards,.school-roster[data-school],.monitor-home,.monitor-grid,.route-guide,.absence-panel,.disclosure-body,.disclosure-inner,.absence-list')&&
+        previous.dataset.school===next.dataset.school&&previous.dataset.disclosureContext===next.dataset.disclosureContext))){
+      patchSections(previous,next);
+      node=previous;
+    }
+    if(container.children[index]!==node)container.insertBefore(node,container.children[index]||null);
+    retained.add(node);
+  }
+  for(const previous of oldSections)if(!retained.has(previous))previous.remove();
 }
 function applySnapshot(data,reveal=false){
   const previous=user(), next=data.user;
@@ -587,7 +657,7 @@ function studentCard(s){
   const pending=!s.rotaId;
   const editButton=`<button type="button" class="link-btn" data-act="edit" data-type="student" data-id="${E(s.id)}" aria-label="${E((pending?'Definir rota e ponto de ':'Alterar rota ou ponto de ')+s.nome)}">${pending?'Definir rota e ponto':'Alterar rota ou ponto'}</button>`;
   const actions=canManageStudent(s)?`<button type="button" class="link-btn" data-act="edit" data-type="student" data-id="${E(s.id)}">Editar estudante</button><button type="button" class="link-btn" data-act="badge" data-id="${E(s.id)}">▦ Crachá QR</button>${isActive(s)&&s.crachaCodigo?`<button type="button" class="link-btn" data-act="replaceBadge" data-id="${E(s.id)}">Substituir crachá perdido</button>`:''}`:role()==='monitor'&&pending?editButton:'';
-  return `<article class="student-card"><div class="student-head"><div class="student-avatar">${E(initials(s.nome))}</div><div class="student-head-title"><b title="${E(s.nome)}">${E(s.nome)}</b><small>${E(val('schools',s.escolaId))}</small></div><span class="tag ${pending?'warn':''}">${pending?'Sem rota':'Vinculado'}</span></div><div class="detail-list">${detail('Código do crachá',s.crachaCodigo||'Atualize os dados')}${detail('Rota',val('routes',s.rotaId))}${canEdit()&&s.logradouro?detail('Logradouro',s.logradouro):''}${detail('Ponto',val('stops',s.pontoId))}${s.responsavel?detail('Responsável',s.responsavel):''}${s.celular?detail('Celular',s.celular):''}</div><div class="student-actions">${actions}</div></article>`;
+  return `<article class="student-card" data-student-id="${E(s.id)}"><div class="student-head"><div class="student-avatar">${E(initials(s.nome))}</div><div class="student-head-title"><b title="${E(s.nome)}">${E(s.nome)}</b><small>${E(val('schools',s.escolaId))}</small></div><span class="tag ${pending?'warn':''}">${pending?'Sem rota':'Vinculado'}</span></div><div class="detail-list">${detail('Código do crachá',s.crachaCodigo||'Atualize os dados')}${detail('Rota',val('routes',s.rotaId))}${canEdit()&&s.logradouro?detail('Logradouro',s.logradouro):''}${detail('Ponto',val('stops',s.pontoId))}${s.responsavel?detail('Responsável',s.responsavel):''}${s.celular?detail('Celular',s.celular):''}</div><div class="student-actions">${actions}</div></article>`;
 }
 function detail(label,value){return `<div class="detail-item"><span>${E(label)}</span><b title="${E(value)}">${E(value)}</b></div>`;}
 function schoolGroups(items, schoolOf = item=>item.escolaId){
@@ -606,7 +676,7 @@ function schoolGroupHeading(schoolId,count){
 function studentResults(items){
   const groups=schoolGroups(items);
   const cards=students=>`<div class="cards">${students.map(studentCard).join('')}</div>`;
-  const results=S.filters.route&&groups.length>1?groups.map(([schoolId,students])=>`<section class="school-roster">${schoolGroupHeading(schoolId,students.length)}${cards(students)}</section>`).join(''):cards(items);
+  const results=S.filters.route&&groups.length>1?groups.map(([schoolId,students])=>`<section class="school-roster" data-school="${E(schoolId)}">${schoolGroupHeading(schoolId,students.length)}${cards(students)}</section>`).join(''):cards(items);
   return `<div class="section-line"><h2>Estudantes <span id="studentResultCount">${items.length} ${items.length===1?'registro':'registros'}</span></h2><button class="btn small" data-act="export" data-what="students">↓ CSV</button></div>${items.length?results:empty('Nenhum estudante encontrado','Experimente limpar os filtros ou cadastre novos estudantes.')}`;
 }
 function empty(t,p){return `<div class="empty"><div class="empty-icon">◎</div><b>${E(t)}</b><div>${E(p)}</div></div>`;}
@@ -677,11 +747,11 @@ function compareStops(first,second){
 function routePointsPanel(route,expanded=false){
   if(!route)return '';
   const points=a('stops').filter(point=>point.rotaId===route.id&&isActive(point)).sort(compareStops);
-  return `<section class="panel route-guide"><details ${expanded?'open':''}>
-    <summary>Pontos de referência · ${E(route.nome)} <span>${points.length} pontos</span></summary>
-    <p>Use os nomes dos locais para se orientar. Sequência cadastrada dos pontos:</p>
-    ${points.length?`<ol class="route-point-list">${points.map(point=>`<li ${Number(point.ordem)>0?`value="${Number(point.ordem)}"`:''}><strong>${E(point.nome)}</strong></li>`).join('')}</ol>`:'<p>Nenhum ponto cadastrado para esta rota.</p>'}
-  </details></section>`;
+  const body=`<p>Use os nomes dos locais para se orientar. Sequência cadastrada dos pontos:</p>
+    ${points.length?`<ol class="route-point-list">${points.map(point=>`<li ${Number(point.ordem)>0?`value="${Number(point.ordem)}"`:''}><strong>${E(point.nome)}</strong></li>`).join('')}</ol>`:'<p>Nenhum ponto cadastrado para esta rota.</p>'}`;
+  const key=JSON.stringify(['points',route.id]);
+  const label=`Pontos de referência · ${E(route.nome)} <span class="disclosure-meta">${points.length} pontos</span>`;
+  return `<section class="panel route-guide" data-disclosure-context="${E(key)}">${disclosure(key,label,body,{open:expanded})}</section>`;
 }
 function canManageDay(route,day){
   return role()!=='escola'&&isActive(route)&&day.slice(0,4)===S.year&&day<=todayLocal();
@@ -712,10 +782,11 @@ function absencePanel(routeId='',schoolId=''){
   const pending=alerts.filter(alert=>!alert.motivo);
   const recorded=alerts.filter(alert=>alert.motivo);
   const row=alert=>`<li class="absence-row"><div><strong>${E(alert.nome)}</strong><small>${E(val('schools',alert.escolaId))} · ${E(val('routes',alert.rotaId))} · ${alert.dias} dias · ${dateHuman(alert.inicio)} a ${dateHuman(alert.fim)}</small></div><button class="btn" type="button" data-act="absence" data-id="${E(alert.id)}" aria-label="${E((alert.motivo?'Ver motivo de ':'Justificar ausência de ')+alert.nome)}">${alert.motivo?'Ver motivo':'Justificar'}</button></li>`;
-  return `<section class="panel absence-panel" aria-labelledby="absenceTitle">
+  const historyKey=JSON.stringify(['absence',routeId,schoolId]);
+  return `<section class="panel absence-panel" aria-labelledby="absenceTitle" data-disclosure-context="${E(historyKey)}">
     <div class="absence-head ${pending.length?'has-alerts':''}"><span class="absence-icon">${icon(pending.length?'alert':'checkCircle')}</span><div><h2 id="absenceTitle" tabindex="-1">Alertas de ausência ${pending.length?`<span class="absence-count" aria-label="${pending.length} a justificar">${pending.length}</span>`:''}</h2><p>${pending.length?'Estudantes com 3 ou mais dias seguidos sem embarque.':'Nenhuma ausência a justificar.'}</p></div></div>
     ${pending.length?`<ul class="absence-list">${pending.map(row).join('')}</ul>`:''}
-    ${recorded.length?`<details class="absence-history"><summary>Motivos registrados (${recorded.length})</summary><ul class="absence-list">${recorded.map(row).join('')}</ul></details>`:''}
+    ${recorded.length?disclosure(historyKey,`Motivos registrados (${recorded.length})`,`<ul class="absence-list">${recorded.map(row).join('')}</ul>`,{className:'absence-history'}):''}
   </section>`;
 }
 function latestBoarding(route,day){
@@ -879,18 +950,12 @@ function studentImportForm(m) {
   const metrics = [['Novos', counts.created], ['Atualizados', counts.updated],
     ['Já cadastrados', counts.existing], ['Para revisar', counts.review]];
   const routeLabel = routes.length === 1 ? (m.result ? 'rota criada' : 'rota nova') : (m.result ? 'rotas criadas' : 'rotas novas');
-  const routeList = routes.length ? `<details class="import-details">
-    <summary>${routes.length} ${routeLabel}</summary>
-    <div class="import-routes">${routes.map(route => `<span class="pill">${E(route)}</span>`).join('')}</div>
-  </details>` : '';
-  const sharedList = sharedRoutes.length ? `<details class="import-details" open>
-    <summary>${m.result?'Rotas vinculadas a esta escola':'Rotas que passarão a atender esta escola'} (${sharedRoutes.length})</summary>
-    <div class="import-routes">${sharedRoutes.map(route => `<span class="pill">${E(route)}</span>`).join('')}</div>
-  </details>` : '';
-  const review = issues.length ? `<details class="import-details" open>
-    <summary>Linhas para revisar</summary>
-    <ul class="import-issues">${issues.map(issue => `<li><b>Linha ${E(issue.line)}${issue.nome?' · '+E(issue.nome):''}</b><span>${E(issue.reason)}</span></li>`).join('')}</ul>
-  </details>` : '';
+  const importContext=m.result?'result':'preview';
+  const routeTags=items=>`<div class="import-routes">${items.map(route => `<span class="pill">${E(route)}</span>`).join('')}</div>`;
+  const routeList=routes.length?disclosure(importContext+'-routes',`${routes.length} ${routeLabel}`,routeTags(routes),{className:'import-details'}):'';
+  const sharedList=sharedRoutes.length?disclosure(importContext+'-shared',`${m.result?'Rotas vinculadas a esta escola':'Rotas que passarão a atender esta escola'} (${sharedRoutes.length})`,routeTags(sharedRoutes),{className:'import-details',open:true}):'';
+  const review=issues.length?disclosure(importContext+'-review','Linhas para revisar',
+    `<ul class="import-issues">${issues.map(issue => `<li><b>Linha ${E(issue.line)}${issue.nome?' · '+E(issue.nome):''}</b><span>${E(issue.reason)}</span></li>`).join('')}</ul>`,{className:'import-details',open:true}):'';
   const status = result.needsReview ? '<div class="tip warn" role="status">A base mudou. Confira a prévia atualizada para continuar.</div>' : '';
   const repeated = counts.repeated ? `<p class="import-context">${counts.repeated} ${counts.repeated===1?'linha repetida ignorada':'linhas repetidas ignoradas'}</p>` : '';
   const actions = m.result
@@ -923,7 +988,7 @@ function monitorSetupDialog(m){
       ${group.monitors.map(monitor=>`<div class="monitor-setup-account"><strong>${E(monitor.nome)}</strong><p>E-mail: <b>${E(monitor.email)}</b></p>
         ${monitor.exists?'<p>Conta vinculada. A senha atual será mantida.</p>':'<p>O perfil será vinculado à conta já criada no Authentication do Supabase.</p>'}
       </div>`).join('')}
-      <details><summary>Conferir os pontos na ordem do arquivo</summary><ol>${group.stops.map(name=>`<li>${E(name)}</li>`).join('')}</ol></details>
+      ${disclosure('setup-'+group.key,'Conferir os pontos na ordem do arquivo',`<ol>${group.stops.map(name=>`<li>${E(name)}</li>`).join('')}</ol>`)}
     </fieldset>`).join('')}
     <p class="tip">As escolas já atendidas, os estudantes, os crachás e os históricos serão preservados. Os pontos existentes manterão seus vínculos. Cada monitora usará seu e-mail e a senha já cadastrada.</p>
     ${modalActions(false,'Salvar acessos e pontos')}
@@ -1045,9 +1110,9 @@ function scannerDialog(m){
     <input id="scannerCapture" type="file" accept="image/*" capture="environment" hidden>
     <input id="scannerFile" type="file" accept="image/*" hidden>
     ${scannerActions(m,live)}
-    <details id="scannerManual" class="scanner-manual" ${m.typed&&m.error?'open':''}><summary>Digitar código do crachá</summary>
-      <form id="modalForm" data-form="scannerCode"><label for="scannerCode">Código do crachá</label><input class="control" id="scannerCode" name="code" placeholder="RC-7K9P-4M2A" value="${E(m.typed)}" maxlength="200" autocomplete="off" autocapitalize="off" spellcheck="false" required><button class="btn" type="submit" ${m.pending?'disabled aria-busy="true"':''}>Registrar</button></form>
-    </details>
+    ${disclosure('scanner-'+m.mode,'Digitar código do crachá',
+      `<form id="modalForm" data-form="scannerCode"><label for="scannerCode">Código do crachá</label><input class="control" id="scannerCode" name="code" placeholder="RC-7K9P-4M2A" value="${E(m.typed)}" maxlength="200" autocomplete="off" autocapitalize="off" spellcheck="false" required><button class="btn" type="submit" ${m.pending?'disabled aria-busy="true"':''}>Registrar</button></form>`,
+      {id:'scannerManual',className:'scanner-manual',open:Boolean(m.typed&&m.error)})}
   </div>`;
 }
 function modalHtml(){const m=S.modal;if(!m)return '';let body='',title='',sub='',submit='Salvar alterações';
@@ -1370,7 +1435,7 @@ async function closeModal(){
   if(m.type==='absence'){
     const button=Array.from(document.querySelectorAll('[data-act="absence"]')).find(item=>item.dataset.id===m.alert.id);
     const history=button?.closest('details');
-    if(history)history.open=true;
+    if(history){history.open=true;syncDisclosure(history);}
     button?.focus();
     refresh();
   }
