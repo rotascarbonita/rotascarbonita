@@ -162,6 +162,8 @@ async function initializeRotas() {
   toggle.addEventListener('click', () => { contrast = !contrast; updateContrast(); try { localStorage.setItem('rc_contrast', contrast ? 'high' : 'normal'); } catch {} });
   updateContrast();
   document.getElementById('rotasStartupRetry').addEventListener('click', () => window.location.reload());
+  const status = document.getElementById('rotasStartupStatus');
+  const loadingTimer = setTimeout(() => { status.textContent = 'Carregando Rotas Carbonita…'; }, 300);
   try {
     const runtime = window.ROTAS_CONFIG || ROTAS_CONFIG;
     const url = String(runtime.supabaseUrl || '').trim();
@@ -170,8 +172,10 @@ async function initializeRotas() {
     window.rotasBackend = await createBackend(url, key);
     startRotasInterface();
   } catch (error) {
-    document.getElementById('rotasStartupStatus').textContent = error.message || 'Não foi possível abrir o sistema. Tente novamente.';
+    status.textContent = error.message || 'Não foi possível abrir o sistema. Tente novamente.';
     document.getElementById('rotasStartupRetry').hidden = false;
+  } finally {
+    clearTimeout(loadingTimer);
   }
 }
 
@@ -182,7 +186,7 @@ function startRotasInterface() {
 /* Rotas Carbonita — interface web. Dados carregados somente após autenticação. */
 (function(){'use strict';
 const STORE={get:k=>{try{return sessionStorage.getItem(k)||''}catch(e){return ''}},set:(k,v)=>{try{sessionStorage.setItem(k,v)}catch(e){}},remove:k=>{try{sessionStorage.removeItem(k)}catch(e){}}};
-const S={token:window.rotasBackend.hasSession()?'authenticated':'',data:null,view:'',year:'',day:todayLocal(),sentido:'IDA',route:'',callSchool:'',callStop:'',filters:{search:'',school:'',route:'',stop:''},modal:null,busy:false,loading:false,loadError:'',menu:false,checking:false};
+const S={token:window.rotasBackend.hasSession()?'authenticated':'',data:null,view:'',year:'',day:todayLocal(),sentido:'IDA',route:'',callSchool:'',callStop:'',filters:{search:'',school:'',route:'',stop:''},modal:null,busy:false,loading:false,loadingVisible:false,loadError:'',menu:false,checking:false};
 const LABEL={profile:'Perfil',dashboard:'Visão geral',students:'Estudantes',schools:'Escolas',classes:'Turmas',routes:'Rotas',stops:'Pontos',attendance:'Chamada',users:'Acessos',reports:'Relatórios'};
 const MONITOR_DOCK=[['dashboard','home'],['students','people'],['reports','chart'],['profile','person']];
 const TYPE={student:'Estudante',school:'Escola',class:'Turma',route:'Rota',stop:'Ponto',user:'Usuário'};
@@ -198,6 +202,10 @@ const STUDENT_SHIFTS=[['MANHA','Manhã'],['TARDE','Tarde']];
 function supportsStudentShifts(){return Boolean(S.data?.studentFeatures||S.data?.studentFeaturesVersion);}
 const isActive=x=>x&&x.ativo!==false&&x.ativo!=='false'&&x.ativo!=='NAO';
 let loadRequest=0;
+const LOAD_FEEDBACK_DELAY=300;
+function hasSnapshot(){
+  return Boolean(S.data?.year!=null&&String(S.data.year)===String(S.year)&&S.data.day===S.day);
+}
 function todayLocal(){
   const parts=new Intl.DateTimeFormat('en',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());
   const byType=Object.fromEntries(parts.map(({type,value})=>[type,value]));
@@ -211,19 +219,33 @@ function timeHuman(s){
 function api(action,data={}){return window.rotasBackend.api(action,data);}
 function message(text,isError=false){const wrap=$('toast');if(!wrap)return;const t=document.createElement('div');t.className='toast'+(isError?' error':'');t.textContent=text;wrap.append(t);setTimeout(()=>t.remove(),4500);}
 function sessionEnded(msg){return /Sessão expirada|Sessão inválida|Usuário (?:desativado|inativo)|usuário inativo/i.test(msg);}
-function warn(e){const msg=e&&e.message||String(e);message(msg,true);if(sessionEnded(msg)){stopCamera();S.token='';S.data=null;S.modal=null;STORE.remove('rc_session');render();}}
-async function load(withSpin=false){if(!S.token)return;S.loadError='';if(withSpin){S.loading=true;render();}
+function warn(e){const msg=e&&e.message||String(e);message(msg,true);if(sessionEnded(msg)){stopCamera();++loadRequest;S.loading=false;S.loadingVisible=false;S.token='';S.data=null;S.modal=null;STORE.remove('rc_session');render();}}
+async function load(showFeedback=false){
+  if(!S.token)return;
   const token=S.token, request=++loadRequest;
+  const context={year:S.year||undefined,day:S.day};
+  const current=()=>S.token===token&&request===loadRequest;
+  S.loadError='';
+  S.loading=true;
+  S.loadingVisible=false;
+  if(!hasSnapshot()||S.view!==renderedView||document.querySelector('.snapshot-slot'))paintSnapshot();
+  else updateLoadFeedback();
+  const timer=setTimeout(()=>{
+    if(!current())return;
+    S.loadingVisible=true;
+    if(!hasSnapshot())paintSnapshot();
+    else if(showFeedback)updateLoadFeedback();
+  },LOAD_FEEDBACK_DELAY);
   try{
-    const d=await api('snapshot',{year:S.year||undefined,day:S.day});
-    if(S.token!==token||request!==loadRequest)return;
+    const d=await api('snapshot',context);
+    if(!current())return;
     if(!d?.user)throw Error('O painel não recebeu os dados da sua conta.');
-    S.data=d;S.year=d.year;S.day=d.day;S.loading=false;render();
-    return true;
-  }
-  catch(e){
-    if(S.token!==token||request!==loadRequest)return;
-    S.loading=false;
+    const reveal=S.loadingVisible&&!hasSnapshot();
+    S.loading=false;S.loadingVisible=false;
+    return applySnapshot(d,reveal);
+  }catch(e){
+    if(!current())return;
+    S.loading=false;S.loadingVisible=false;
     const msg=e&&e.message||String(e);
     if(/troca de senha/i.test(msg)){
       S.data=S.data||{user:{trocarSenha:'SIM',nome:'Usuário',perfil:'secretaria'}};
@@ -231,17 +253,32 @@ async function load(withSpin=false){if(!S.token)return;S.loadError='';if(withSpi
       render();
       return;
     }
-    if(!S.data&&!sessionEnded(msg))S.loadError=msg;
-    else warn(e);
-    render();
-  }}
-async function refresh(){if(!S.token||!S.data||S.checking||S.busy||S.loading||S.modal||closingDialog||document.hidden)return;
-  const {data,token,year,day}=S;
-  S.checking=true;try{
-    const x=await api('updates',{version:data.version,year,day});
-    if(x.changed&&!S.modal&&!closingDialog&&!S.busy&&!S.loading&&S.data===data&&S.token===token&&S.year===year&&S.day===day){S.data=x;render();}
+    if(sessionEnded(msg)){warn(e);return;}
+    if(!hasSnapshot()){
+      S.loadError=msg;
+      paintSnapshot();
+    }else{
+      updateLoadFeedback();
+      warn(e);
+    }
+  }finally{
+    clearTimeout(timer);
   }
-  catch(e){if(S.token===token)warn(e);}finally{S.checking=false;}}
+}
+async function refresh(){
+  if(!S.token||!hasSnapshot()||S.checking||S.busy||S.loading||S.modal||closingDialog||document.hidden)return;
+  const {data,token,year,day}=S, request=loadRequest;
+  const current=()=>request===loadRequest&&S.data===data&&S.token===token&&S.year===year&&S.day===day;
+  S.checking=true;
+  try{
+    const x=await api('updates',{version:data.version,year,day});
+    if(current()&&x.changed&&!S.modal&&!closingDialog&&!S.busy&&!S.loading)applySnapshot(x);
+  }catch(e){
+    if(current())warn(e);
+  }finally{
+    S.checking=false;
+  }
+}
 setInterval(refresh,60000);
 window.addEventListener('rotas:changed',refresh);
 window.addEventListener('rotas:signed-out',()=>{if(S.token)logout();});
@@ -287,10 +324,7 @@ function render(){
     return;
   }
   if(!S.data){
-    app.innerHTML=`<main class="splash" id="conteudo" tabindex="-1"><div class="startup-content">
-      <p role="status">${S.loadError?E(S.loadError):'Carregando o painel…'}</p>
-      ${S.loadError?'<button class="btn primary" type="button" data-act="refresh">Tentar novamente</button> <button class="btn" type="button" data-act="logout">Voltar ao login</button>':''}
-    </div></main>`;
+    app.innerHTML=`<main class="snapshot-startup" id="conteudo" tabindex="-1">${snapshotPlaceholder()}</main>`;
     return;
   }
   const monitor=role()==='monitor';
@@ -299,11 +333,14 @@ function render(){
   }
   if(monitor)syncMonitorDock(reactDock,fallbackDock);
   const previousMain=app.querySelector('.main');
-  const mainFocused=previousMain&&previousMain===document.activeElement;
-  const mainScroll=S.view===renderedView?previousMain?.scrollTop??0:0;
-  const enteringView=!S.loading&&S.view!==renderedView;
+  const active=document.activeElement;
+  const mainFocused=previousMain&&previousMain===active;
+  const focusedId=app.contains(active)?active.id:'';
+  const sameView=S.view===renderedView;
+  const mainScroll=sameView?previousMain?.scrollTop??0:0;
+  const enteringView=hasSnapshot()&&S.view!==renderedView;
   const openingMenu=S.menu&&!renderedMenu;
-  if(!S.loading)renderedView=S.view;
+  renderedView=S.view;
   renderedMenu=S.menu;
   app.innerHTML=`<div class="shell${monitor?' monitor-shell':''}${S.menu?' menu-open':''}${openingMenu?' menu-enter':''}${openingDialog?' dialog-enter':''}">
     <div class="topbar" ${dialogOpen}>
@@ -313,8 +350,9 @@ function render(){
         <div class="crumb"><span class="crumb-prefix">Transporte escolar ${icon('chevron')}</span><strong>${E(LABEL[S.view])}</strong></div>
       </div>
       <div class="topright">
-        <select class="control" id="yearSelect" aria-label="Ano letivo">${a('years').map(y=>`<option value="${E(y)}" ${y===S.year?'selected':''}>Ano ${E(y)}</option>`).join('')}</select>
+        <select class="control" id="yearSelect" aria-label="Ano letivo">${yearOptions()}</select>
         <button class="icon-btn" type="button" data-act="refresh" aria-label="Atualizar dados" title="Atualizar dados">${icon('refresh')}</button>
+        <span id="snapshotStatus" class="sr-only" role="status"></span>
         <button class="icon-btn" type="button" data-act="password" aria-label="Alterar senha" title="Alterar senha">${icon('lock')}</button>
       </div>
     </div>
@@ -330,13 +368,17 @@ function render(){
       </div>
     </aside>
     <main class="main" id="conteudo" tabindex="-1" ${dialogOpen}>
-      <div class="content${enteringView?' view-enter':''}">${S.loading?'<p class="panel-loading" role="status">Atualizando os dados…</p>':content()}</div>
+      <div class="content${enteringView?' view-enter':''}">${snapshotContent()}</div>
     </main>
     ${S.modal?modalHtml():''}
   </div>`;
   const main=$('conteudo');
   main.scrollTop=mainScroll;
-  if(mainFocused&&!S.modal)main.focus({preventScroll:true});
+  if(!S.modal&&sameView){
+    if(mainFocused)main.focus({preventScroll:true});
+    else if(focusedId)$(focusedId)?.focus({preventScroll:true});
+  }
+  updateLoadFeedback();
   if (S.modal) {
     app.querySelector('.modal').scrollTop = modalScroll;
     if (openingDialog) $('modalTitle')?.focus({preventScroll:true});
@@ -358,6 +400,106 @@ function syncMonitorDock(reactDock,fallbackDock){
     if(button.dataset.view===S.view)button.setAttribute('aria-current','page');
     else button.removeAttribute('aria-current');
   }
+}
+function yearOptions(){
+  return a('years').map(year=>`<option value="${E(year)}" ${String(year)===String(S.year)?'selected':''}>Ano ${E(year)}</option>`).join('');
+}
+function updateLoadFeedback(){
+  const delayed=S.loading&&S.loadingVisible;
+  const button=document.querySelector('.topright [data-act=refresh]');
+  const status=$('snapshotStatus');
+  const text=delayed?'Atualizando os dados…':'';
+  const busy=String(delayed);
+  if(button&&button.getAttribute('aria-busy')!==busy)button.setAttribute('aria-busy',busy);
+  if(status&&status.textContent!==text)status.textContent=text;
+  const area=document.querySelector('.main .content');
+  if(area)area.setAttribute('aria-busy',String(S.loading&&!hasSnapshot()));
+}
+function syncSelect(select,markup,value){
+  const template=document.createElement('template');
+  template.innerHTML=markup;
+  const options=[...template.content.children];
+  if(options.length!==select.length||options.some((option,index)=>!option.isEqualNode(select.options[index]))){
+    select.replaceChildren(...options);
+  }
+  if(select.value!==String(value)){
+    select.value=value;
+    if(select.selectedIndex===-1)select.selectedIndex=0;
+  }
+}
+function paintSnapshot(reveal=false){
+  if(S.modal||renderedModalType||!S.data||S.view!==renderedView||!$('yearSelect')){
+    render();
+    if(reveal)document.querySelector('.main .content')?.classList.add('snapshot-reveal');
+    return;
+  }
+  syncSelect($('yearSelect'),yearOptions(),S.year);
+  const area=document.querySelector('.main .content');
+  const main=$('conteudo'), scrolled=main.scrollTop, windowScroll=window.scrollY;
+  if(!hasSnapshot()&&scrolled&&!area.style.minBlockSize)area.style.minBlockSize=area.offsetHeight+'px';
+  if(hasSnapshot())area.style.removeProperty('min-block-size');
+  const active=document.activeElement;
+  const focusId=area.contains(active)?active.id:'';
+  const template=document.createElement('template');
+  template.innerHTML=snapshotContent();
+  const oldSections=[...area.children], newSections=[...template.content.children];
+  for(const [index,next] of newSections.entries()){
+    const previous=oldSections[index];
+    if(!previous){area.append(next);continue;}
+    if(previous.id==='studentFilters'&&next.id==='studentFilters'){
+      syncStudentFilters();
+    }else if(!previous.isEqualNode(next)){
+      previous.replaceWith(next);
+    }
+  }
+  for(const previous of oldSections.slice(newSections.length))previous.remove();
+  area.classList.toggle('snapshot-reveal',reveal);
+  announceStudentResults();
+  updateLoadFeedback();
+  if(!active.isConnected){
+    const nextFocus=focusId&&$(focusId);
+    (nextFocus||main).focus({preventScroll:true});
+  }
+  if(main.scrollTop!==scrolled)main.scrollTop=scrolled;
+  if(window.scrollY!==windowScroll)window.scrollTo(0,windowScroll);
+}
+function applySnapshot(data,reveal=false){
+  const previous=user(), next=data.user;
+  const shellChanged=previous?.perfil!==next?.perfil||previous?.nome!==next?.nome||
+    next?.trocarSenha==='SIM'||next?.exigeTroca;
+  // A same-context response must not replace data under an active form or scanner.
+  if(S.modal&&!shellChanged&&hasSnapshot()){
+    updateLoadFeedback();
+    return false;
+  }
+  S.data=data;S.year=data.year;S.day=data.day;
+  if(shellChanged){
+    render();
+    if(reveal)document.querySelector('.main .content')?.classList.add('snapshot-reveal');
+  }else paintSnapshot(reveal);
+  return true;
+}
+function snapshotContent(){return hasSnapshot()?content():snapshotPlaceholder();}
+function snapshotPlaceholder(){
+  const day=S.data&&S.view==='attendance'?hero('Chamada do transporte','Confira os embarques por escola, data, rota e sentido.')+
+    `<div class="panel"><div class="attendance-tools"><div class="boarding-route"><label for="callDay">Data</label><input type="date" class="control" id="callDay" value="${E(S.day)}" max="${todayLocal()}"></div></div></div>`:'';
+  if(S.loadError)return day+`<section class="panel snapshot-slot">
+    <p role="alert">${E(S.loadError)}</p>
+    <button class="btn primary" type="button" data-act="refresh">Tentar novamente</button>
+    ${!S.data?'<button class="btn" type="button" data-act="logout">Voltar ao login</button>':''}
+  </section>`;
+  const view=S.view||'dashboard';
+  const blocks=(count,classes)=>Array.from({length:count},()=>`<div class="${classes}"><i></i><i></i><i></i></div>`).join('');
+  const monitorHome=view==='dashboard'&&role()==='monitor';
+  const summary=['dashboard','reports'].includes(view)&&!monitorHome;
+  const students=view==='students'||view==='dashboard'&&!monitorHome;
+  const status=S.data||!S.loadingVisible?'':'<span class="sr-only" role="status">Carregando o painel…</span>';
+  return day+status+`<div class="snapshot-slot skeleton${S.loadingVisible?'':' skeleton-waiting'}" aria-hidden="true">
+    ${day?'':'<div class="hero skeleton-heading"><i></i><i></i></div>'}
+    ${summary?`<div class="stats">${blocks(4,'stat skeleton-stat')}</div>`:''}
+    ${students?`<div class="panel skeleton-filters"><i></i><div class="filters">${'<i></i>'.repeat(4)}</div></div><div class="cards">${blocks(3,'student-card skeleton-card')}</div>`:
+      monitorHome?`<div class="monitor-grid">${blocks(2,'panel skeleton-table')}</div>`:`<div class="panel skeleton-table">${'<i></i>'.repeat(5)}</div>`}
+  </div>`;
 }
 function monitorProfile(){
   return `<div class="hero"><h1>Perfil</h1></div>
@@ -406,11 +548,38 @@ function stat(title,num,symbol,foot){return `<div class="stat"><div class="stat-
 function stats(){const assigned=a('students').filter(x=>!!x.rotaId).length;
   return `<div class="stats">${stat('Estudantes',a('students').length,'people','Cadastrados no ano')}${stat('Rotas ativas',a('routes').filter(isActive).length,'route','Rotas autorizadas')}${stat('Pontos de embarque',a('stops').length,'pin','Pontos cadastrados')}${stat('Com rota definida',assigned,'check',(a('students').length-assigned)+' pendentes')}</div>`;}
 function content(){switch(S.view){case 'profile':return monitorProfile();case 'dashboard':return dashboard();case 'students':return studentsScreen();case 'schools':return listScreen('school','schools');case 'classes':return listScreen('class','classes');case 'routes':return listScreen('route','routes');case 'stops':return listScreen('stop','stops');case 'users':return usersScreen();case 'attendance':return attendanceScreen();case 'reports':return reportsScreen();default:return dashboard();}}
-function filtersHtml(){const f=S.filters,allowedSchools=a('schools'),routes=a('routes').filter(r=>!f.school||routeSchoolIds(r).includes(f.school)),routeIds=new Set(routes.map(r=>r.id)),stops=a('stops').filter(p=>routeIds.has(p.rotaId)&&(!f.route||p.rotaId===f.route));
-  return `<div class="panel"><div class="panel-head"><div><div class="panel-title">Encontre estudantes rapidamente</div><div class="panel-sub">Combine escola, rota e ponto para refinar sua busca.</div></div><button class="btn small" data-act="resetFilters">Limpar filtros</button></div><div class="filters"><div class="search"><input class="control" id="searchStudents" aria-label="Buscar estudante" value="${E(f.search)}" placeholder="Buscar por nome ou código RC do crachá…" autocomplete="off"></div>
-  <select class="control" id="filterSchool" aria-label="Filtrar escola"><option value="">Todas as escolas</option>${options(allowedSchools,f.school)}</select>
-  <select class="control" id="filterRoute" aria-label="Filtrar rota"><option value="">Todas as rotas</option>${options(routes,f.route)}</select>
-  <select class="control" id="filterStop" aria-label="Filtrar ponto"><option value="">Todos os pontos</option>${options(stops,f.stop)}</select></div></div>`;}
+function studentFilterOptions(){
+  const f=S.filters,routes=a('routes').filter(r=>!f.school||routeSchoolIds(r).includes(f.school));
+  const routeIds=new Set(routes.map(r=>r.id));
+  const stops=a('stops').filter(p=>routeIds.has(p.rotaId)&&(!f.route||p.rotaId===f.route));
+  return [
+    ['filterSchool','Todas as escolas',a('schools'),f.school],
+    ['filterRoute','Todas as rotas',routes,f.route],
+    ['filterStop','Todos os pontos',stops,f.stop]
+  ];
+}
+function filterOptions(label,items,value){return `<option value="">${label}</option>${options(items,value)}`;}
+function syncStudentFilters(){
+  const search=$('searchStudents');
+  if(search.value!==S.filters.search)search.value=S.filters.search;
+  for(const [id,label,items,value] of studentFilterOptions())syncSelect($(id),filterOptions(label,items,value),value);
+}
+function announceStudentResults(){
+  const status=$('studentResultStatus'),count=$('studentResultCount');
+  if(status&&count&&status.textContent!==count.textContent)status.textContent=count.textContent;
+}
+function updateStudentResults(){
+  clearTimeout(studentSearchTimer);
+  const results=$('studentResults');
+  if(!results||!hasSnapshot()||S.modal)return;
+  const items=filteredStudents();
+  results.innerHTML=studentResults(S.view==='dashboard'?items.slice(0,12):items);
+  announceStudentResults();
+}
+function filtersHtml(){const f=S.filters;
+  return `<div class="panel" id="studentFilters"><div class="panel-head"><div><div class="panel-title">Encontre estudantes rapidamente</div><div class="panel-sub">Combine escola, rota e ponto para refinar sua busca.</div></div><button class="btn small" data-act="resetFilters">Limpar filtros</button></div><div class="filters"><div class="search"><input class="control" id="searchStudents" aria-label="Buscar estudante" value="${E(f.search)}" placeholder="Buscar por nome ou código RC do crachá…" autocomplete="off"></div>
+  ${studentFilterOptions().map(([id,label,items,value],index)=>`<select class="control" id="${id}" aria-label="Filtrar ${['escola','rota','ponto'][index]}">${filterOptions(label,items,value)}</select>`).join('')}
+  </div><span class="sr-only" id="studentResultStatus" role="status" aria-atomic="true"></span></div>`;}
 function options(items,selected){return items.map(x=>`<option value="${E(x.id)}" ${x.id===selected?'selected':''}>${E(x.nome)}</option>`).join('');}
 function badgeSearchKey(value){return String(value||'').toUpperCase().replace(/[\s-]/g,'');}
 function filteredStudents(){const f=S.filters,term=f.search.trim().toLowerCase();return a('students').filter(x=>(!f.school||x.escolaId===f.school)&&(!f.route||x.rotaId===f.route)&&(!f.stop||x.pontoId===f.stop)&&(!term||x.nome.toLowerCase().includes(term)||(badgeSearchKey(term).length>=3&&badgeSearchKey(x.crachaCodigo).includes(badgeSearchKey(term)))||val('classes',x.turmaId).toLowerCase().includes(term))).sort((x,y)=>x.nome.localeCompare(y.nome,'pt-BR'));}
@@ -438,7 +607,7 @@ function studentResults(items){
   const groups=schoolGroups(items);
   const cards=students=>`<div class="cards">${students.map(studentCard).join('')}</div>`;
   const results=S.filters.route&&groups.length>1?groups.map(([schoolId,students])=>`<section class="school-roster">${schoolGroupHeading(schoolId,students.length)}${cards(students)}</section>`).join(''):cards(items);
-  return `<div class="section-line"><h2>Estudantes <span>${items.length} registros</span></h2><button class="btn small" data-act="export" data-what="students">↓ CSV</button></div>${items.length?results:empty('Nenhum estudante encontrado','Experimente limpar os filtros ou cadastre novos estudantes.')}`;
+  return `<div class="section-line"><h2>Estudantes <span id="studentResultCount">${items.length} ${items.length===1?'registro':'registros'}</span></h2><button class="btn small" data-act="export" data-what="students">↓ CSV</button></div>${items.length?results:empty('Nenhum estudante encontrado','Experimente limpar os filtros ou cadastre novos estudantes.')}`;
 }
 function empty(t,p){return `<div class="empty"><div class="empty-icon">◎</div><b>${E(t)}</b><div>${E(p)}</div></div>`;}
 function dashboard(){
@@ -1215,7 +1384,8 @@ async function changePassword(form){const d=formData(form);if(d.next!==d.confirm
 function logout(){
   stopCamera();
   api('logout').catch(()=>{});
-  S.token='';S.data=null;S.modal=null;S.loading=false;S.loadError='';S.menu=false;S.callSchool='';S.callStop='';
+  ++loadRequest;
+  S.token='';S.data=null;S.modal=null;S.loading=false;S.loadingVisible=false;S.loadError='';S.menu=false;S.callSchool='';S.callStop='';
   STORE.remove('rc_session');
   render();
 }
@@ -1509,7 +1679,7 @@ async function handleClick(e){const b=e.target.closest('[data-act]');if(!b)retur
     S.view='attendance';S.menu=false;S.day=todayLocal();load(true);
     window.scrollTo(0,0);$('conteudo')?.focus({preventScroll:true});return;
   }
-  if(act==='refresh'){if(await load(true))message('Dados atualizados.');return;}
+  if(act==='refresh'){if(S.loading&&hasSnapshot())return;if(await load(true))message('Dados atualizados.');return;}
   if(act==='logout'){await logout();return;}
   if(act==='password'){S.modal={type:'password',mandatory:false};render();$('modalTitle')?.focus();return;}
   if(act==='new'){openModal(type,null,b);return;}
@@ -1550,7 +1720,7 @@ async function handleClick(e){const b=e.target.closest('[data-act]');if(!b)retur
   if(act==='newYear'){S.modal={type:'year'};render();$('modalTitle')?.focus();return;}
   if(act==='print'){stopCamera();window.print();return;}
   if(act==='export'){exportCSV(b.dataset.what);return;}
-  if(act==='resetFilters'){S.filters={search:'',school:'',route:'',stop:''};render();return;}
+  if(act==='resetFilters'){S.filters={search:'',school:'',route:'',stop:''};syncStudentFilters();updateStudentResults();return;}
   if(act==='disable'){
     if(!confirm('Desativar este registro? Estudantes e referências vinculadas poderão impedir a operação.'))return;
     await mutate('disable',{type,id},'Registro desativado.');return;
@@ -1687,14 +1857,14 @@ function handleChange(e){const target=e.target,id=target.id;
     const routeIds=new Set(a('routes').filter(route=>!schoolId||routeSchoolIds(route).includes(schoolId)).map(route=>route.id));
     if(!routeIds.has(S.filters.route))S.filters.route='';
     if(!routeIds.has(find('stops',S.filters.stop)?.rotaId))S.filters.stop='';
-    render();$('filterSchool')?.focus({preventScroll:true});return;
+    syncStudentFilters();updateStudentResults();return;
   }
-  if(id==='filterRoute'){S.filters.route=target.value;S.filters.stop='';render();return;}
-  if(id==='filterStop'){S.filters.stop=target.value;render();return;}
-  if(id==='callDirection'){S.sentido=target.value;stopCamera();render();return;}
-  if(id==='callRoute'){S.route=target.value;S.callSchool='';S.callStop='';stopCamera();render();$('callRoute')?.focus({preventScroll:true});return;}
-  if(id==='callSchool'){S.callSchool=target.value;render();$('callSchool')?.focus({preventScroll:true});return;}
-  if(id==='callStop'){S.callStop=target.value;render();$('callStop')?.focus({preventScroll:true});return;}
+  if(id==='filterRoute'){S.filters.route=target.value;S.filters.stop='';syncStudentFilters();updateStudentResults();return;}
+  if(id==='filterStop'){S.filters.stop=target.value;updateStudentResults();return;}
+  if(id==='callDirection'){S.sentido=target.value;stopCamera();paintSnapshot();return;}
+  if(id==='callRoute'){S.route=target.value;S.callSchool='';S.callStop='';stopCamera();paintSnapshot();return;}
+  if(id==='callSchool'){S.callSchool=target.value;paintSnapshot();return;}
+  if(id==='callStop'){S.callStop=target.value;paintSnapshot();return;}
   if(id==='callDay'){S.day=target.value||todayLocal();stopCamera();load(true);return;}
   if(target.dataset.cascade&&S.modal){
     const form=$('modalForm');if(!form)return;
@@ -1713,12 +1883,7 @@ function queueStudentSearch(e) {
   if (input.id !== 'searchStudents' || e.isComposing) return;
   S.filters.search = input.value;
   clearTimeout(studentSearchTimer);
-  studentSearchTimer = setTimeout(() => {
-    const results = $('studentResults');
-    if (!results || S.modal) return;
-    const items = filteredStudents();
-    results.innerHTML = studentResults(S.view === 'dashboard' ? items.slice(0, 12) : items);
-  }, 120);
+  studentSearchTimer = setTimeout(updateStudentResults,120);
 }
 document.addEventListener('click',e=>{handleClick(e).catch(warn);});
 document.addEventListener('submit', async e => {
@@ -1772,7 +1937,7 @@ document.addEventListener('keydown',e=>{
 });
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});
 window.addEventListener('pagehide',stopCamera);
-render();if(S.token)load();
+if(S.token)load();else render();
 })();
 
 }
