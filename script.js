@@ -263,6 +263,7 @@ let renderedView='', renderedModalType='', renderedMenu=false;
 function render(){
   const app=$('app');
   const reactDock=$('monitorDockReact');
+  const fallbackDock=$('monitorDockFallback');
   if(S.token&&(user()?.trocarSenha==='SIM'||user()?.exigeTroca))S.modal={type:'password',mandatory:true};
   const modalType=S.modal?.type||'';
   const openingDialog=Boolean(modalType&&modalType!==renderedModalType);
@@ -273,8 +274,11 @@ function render(){
   $('siteHeader')?.toggleAttribute('inert',Boolean(S.modal));
   $('siteFooter')?.toggleAttribute('inert',Boolean(S.modal));
 
-  if(reactDock)reactDock.hidden=!S.token||!S.data||role()!=='monitor'||Boolean(S.modal?.type==='password'&&!S.data?.schools);
-  reactDock?.toggleAttribute('inert',Boolean(S.modal));
+  const showDock=Boolean(S.token&&S.data&&role()==='monitor'&&!(S.modal?.type==='password'&&!S.data.schools));
+  for(const dock of [reactDock,fallbackDock]){
+    dock.hidden=!showDock;
+    dock.toggleAttribute('inert',Boolean(S.modal));
+  }
   if(!S.token){S.view='';renderedView='';renderedMenu=false;app.innerHTML=loginHtml();return;}
   if(S.modal&&S.modal.type==='password'&&(!S.data||!S.data.schools)){
     app.innerHTML=`<main class="splash${openingDialog?' dialog-enter':''}" id="conteudo" tabindex="-1">${modalHtml()}</main>`;
@@ -290,9 +294,12 @@ function render(){
   }
   const monitor=role()==='monitor';
   if(!S.view||!canSee(S.view)){
-    S.view=monitor&&window.matchMedia('(max-width: 870px)').matches?'attendance':'dashboard';
+    S.view=monitor?'attendance':'dashboard';
   }
-  if(monitor&&reactDock)reactDock.dataset.view=S.view;
+  if(monitor)syncMonitorDock(reactDock,fallbackDock);
+  const previousMain=app.querySelector('.main');
+  const mainFocused=previousMain&&previousMain===document.activeElement;
+  const mainScroll=S.view===renderedView?previousMain?.scrollTop??0:0;
   const enteringView=!S.loading&&S.view!==renderedView;
   const openingMenu=S.menu&&!renderedMenu;
   if(!S.loading)renderedView=S.view;
@@ -324,9 +331,11 @@ function render(){
     <main class="main" id="conteudo" tabindex="-1" ${dialogOpen}>
       <div class="content${enteringView?' view-enter':''}">${S.loading?'<p class="panel-loading" role="status">Atualizando os dados…</p>':content()}</div>
     </main>
-    ${monitor?monitorDock(dialogOpen):''}
     ${S.modal?modalHtml():''}
   </div>`;
+  const main=$('conteudo');
+  main.scrollTop=mainScroll;
+  if(mainFocused&&!S.modal)main.focus({preventScroll:true});
   if (S.modal) {
     app.querySelector('.modal').scrollTop = modalScroll;
     if (openingDialog) $('modalTitle')?.focus({preventScroll:true});
@@ -334,12 +343,20 @@ function render(){
   if(S.modal?.type==='assign')syncAssignmentForm($('modalForm'));
   if(S.modal?.mandatory)$('modalTitle')?.focus();
 }
-function monitorDock(dialogOpen){
-  return `<nav class="monitor-dock" aria-label="Navegação da monitora" ${dialogOpen}>
-    ${MONITOR_DOCK.map(([view,symbol])=>`<button type="button" data-act="nav" data-view="${view}" ${S.view===view?'aria-current="page"':''}>
-      ${icon(symbol)}<span>${LABEL[view]}</span>
-    </button>`).join('')}
-  </nav>`;
+function syncMonitorDock(reactDock,fallbackDock){
+  if(reactDock.dataset.view!==S.view)reactDock.dataset.view=S.view;
+  if(!fallbackDock.firstElementChild){
+    fallbackDock.innerHTML=`<nav class="monitor-dock dock-tabs" aria-label="Navegação da monitora">
+      <span class="dock-tabs-indicator" aria-hidden="true"></span>
+      ${MONITOR_DOCK.map(([view,symbol])=>`<button type="button" data-act="nav" data-view="${view}">
+        ${icon(symbol)}<span>${LABEL[view]}</span>
+      </button>`).join('')}
+    </nav>`;
+  }
+  for(const button of fallbackDock.querySelectorAll('button')){
+    if(button.dataset.view===S.view)button.setAttribute('aria-current','page');
+    else button.removeAttribute('aria-current');
+  }
 }
 function monitorProfile(){
   return `<div class="hero"><h1>Perfil</h1></div>
@@ -1431,12 +1448,12 @@ async function handleClick(e){const b=e.target.closest('[data-act]');if(!b)retur
     stopCamera();S.view=b.dataset.view;S.menu=false;S.modal=null;
     const day=todayLocal();
     if(role()==='monitor'&&S.view==='dashboard'&&S.data.day!==day){
-      S.day=day;await load(true);
+      S.day=day;load(true);
     }else render();
     window.scrollTo(0,0);$('conteudo')?.focus({preventScroll:true});return;
   }
   if(act==='todayCalls'){
-    S.view='attendance';S.menu=false;S.day=todayLocal();await load(true);
+    S.view='attendance';S.menu=false;S.day=todayLocal();load(true);
     window.scrollTo(0,0);$('conteudo')?.focus({preventScroll:true});return;
   }
   if(act==='refresh'){if(await load(true))message('Dados atualizados.');return;}

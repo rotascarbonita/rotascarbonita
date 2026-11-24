@@ -470,7 +470,7 @@ main[tabindex="-1"]:focus { outline: none; }
 .hero p { margin: 0; color: var(--text); }
 .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
 
-.btn, .icon-btn, .direction-btn, .nav-btn, .monitor-dock button {
+.btn, .icon-btn, .direction-btn, .nav-btn {
   transition: background-color var(--motion-microinteraction) var(--interaction-ease),
     color var(--motion-microinteraction) var(--interaction-ease),
     border-color var(--motion-microinteraction) var(--interaction-ease),
@@ -497,11 +497,11 @@ main[tabindex="-1"]:focus { outline: none; }
 
 .btn > svg, .icon-btn > svg { display: block; flex: none; }
 .btn > svg { width: 18px; height: 18px; }
-.btn, .icon-btn, .direction-btn, .nav-btn, .monitor-dock button, .rotas-bottom-nav button {
+.btn, .icon-btn, .direction-btn, .nav-btn, .dock-tabs button {
   touch-action: manipulation;
 }
 .btn:active:not(:disabled), .icon-btn:active:not(:disabled), .direction-btn:active:not(:disabled),
-.nav-btn:active:not(:disabled), .monitor-dock button:active:not(:disabled) {
+.nav-btn:active:not(:disabled) {
   opacity: .8;
 }
 .btn.small { min-height: 39px; padding: 7px 12px; font-size: .8125rem; }
@@ -1210,7 +1210,7 @@ html:has(.modal-mask) { overflow: hidden; }
   .scanner-actions, .scanner-manual form { grid-template-columns: minmax(0, 1fr); }
 }
 
-.view-enter { animation: view-in var(--motion-navigation) var(--motion-surface-ease); }
+.view-enter { animation: page-fade-in var(--motion-navigation) var(--motion-surface-ease); }
 .dialog-enter > .modal-mask { animation: dialog-backdrop-in var(--motion-modal-open) ease-out; }
 .dialog-enter > .modal-mask > .modal { animation: view-in var(--motion-modal-open) var(--motion-surface-ease); }
 .scanner-notice {
@@ -1229,6 +1229,7 @@ html:has(.modal-mask) { overflow: hidden; }
   animation: panel-loading-spin var(--motion-loading-cycle) linear infinite;
 }
 
+@keyframes page-fade-in { from { opacity: .9; } }
 @keyframes view-in { from { opacity: .88; transform: translateY(3px); } }
 @keyframes dialog-backdrop-in { from { opacity: 0; } }
 @keyframes panel-loading-spin { to { transform: rotate(1turn); } }
@@ -1331,7 +1332,7 @@ html:has(.modal-mask) { overflow: hidden; }
   .monitor-home .direction-btn { min-height: 56px; }
 }
 
-.monitor-dock, .monitor-shell .monitor-call-shortcut { display: none; }
+.monitor-shell .monitor-call-shortcut { display: none; }
 .monitor-profile { max-width: 480px; }
 .monitor-profile-identity { display: flex; align-items: center; gap: 12px; overflow-wrap: anywhere; }
 .monitor-profile-identity strong { color: var(--heading); }
@@ -1370,51 +1371,6 @@ html:has(.modal-mask) { overflow: hidden; }
   }
   .monitor-call-shortcut svg { width: 18px; height: 18px; }
 
-  .monitor-dock {
-    position: fixed;
-    z-index: 30;
-    inset: auto max(10px, env(safe-area-inset-right, 0px))
-      max(8px, env(safe-area-inset-bottom, 0px)) max(10px, env(safe-area-inset-left, 0px));
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 2px;
-    width: auto;
-    max-width: 30rem;
-    margin-inline: auto;
-    padding: 6px;
-    border-radius: 999px;
-    background: var(--surface);
-  }
-  .monitor-dock button {
-    display: grid;
-    justify-items: center;
-    align-content: center;
-    min-width: 0;
-    min-height: 52px;
-    padding: 4px 1px;
-    border: 0;
-    border-radius: 999px;
-    background: transparent;
-    color: var(--text);
-    font-size: .6875rem;
-    font-weight: 650;
-    line-height: 1.2;
-    text-align: center;
-    overflow-wrap: anywhere;
-  }
-  .monitor-dock, .rotas-bottom-nav--fixed {
-    border: 1px solid var(--line);
-    box-shadow: 0 4px 14px #071d4124, 0 1px 3px #071d410d;
-  }
-  .monitor-dock button, .rotas-bottom-nav--fixed button { gap: 5px; }
-  .monitor-dock button > svg, .rotas-bottom-nav--fixed button > svg {
-    display: block;
-    flex: none;
-    width: 21px;
-    height: 21px;
-  }
-  .monitor-dock button:hover { background: var(--tint); }
-  .monitor-dock button[aria-current="page"] { background: var(--blue); color: var(--on-blue); }
   body:has(.monitor-shell) #toast { bottom: calc(82px + env(safe-area-inset-bottom, 0px)); }
 }
 
@@ -1423,9 +1379,89 @@ html:has(.modal-mask) { overflow: hidden; }
 }
 
 
-@media screen and (prefers-reduced-motion: reduce) {
-  /* Also covers transforms applied by the compiled dock when the setting changes live. */
-  .rotas-bottom-nav button, .rotas-bottom-nav button > [aria-hidden="true"]:not(svg) {
-    transform: none !important;
+.dock-tabs {
+  --dock-padding: 6px;
+  --dock-gap: 2px;
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--dock-gap);
+  max-width: 30rem;
+  padding: var(--dock-padding);
+  border: 1px solid var(--line);
+  border-radius: 1.5rem;
+  background: var(--surface);
+  box-shadow: 0 4px 14px #071d4124, 0 1px 3px #071d410d;
+}
+
+.dock-tabs-indicator {
+  position: absolute;
+  inset: var(--dock-padding) auto var(--dock-padding) var(--dock-padding);
+  width: calc((100% - 2 * var(--dock-padding) - 3 * var(--dock-gap)) / 4);
+  border-radius: 1.125rem;
+  background: var(--tint);
+  pointer-events: none;
+  visibility: hidden;
+  transform: translateX(calc(var(--dock-index, 0) * (100% + var(--dock-gap))));
+}
+
+.dock-tabs:has(button[aria-current="page"]) .dock-tabs-indicator {
+  visibility: visible;
+  transition: transform var(--motion-navigation) var(--motion-surface-ease);
+}
+
+.dock-tabs:has(button:nth-of-type(2)[aria-current="page"]) { --dock-index: 1; }
+.dock-tabs:has(button:nth-of-type(3)[aria-current="page"]) { --dock-index: 2; }
+.dock-tabs:has(button:nth-of-type(4)[aria-current="page"]) { --dock-index: 3; }
+
+.dock-tabs button {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 5px;
+  min-width: 0;
+  min-height: 52px;
+  padding: 4px 2px;
+  border: 0;
+  border-radius: 1.125rem;
+  background: transparent;
+  color: var(--text);
+  font-size: .6875rem;
+  font-weight: 650;
+  line-height: 1.2;
+  text-align: center;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  transition: transform var(--motion-touch) var(--motion-surface-ease);
+}
+
+.dock-tabs button > svg { display: block; width: 21px; height: 21px; }
+.dock-tabs button[aria-current="page"] { color: var(--blue); }
+.dock-tabs button:focus-visible { outline-offset: -2px; }
+.dock-tabs button:active { transform: scale(.96); }
+
+@media (hover: hover) {
+  .dock-tabs button:not([aria-current="page"]):hover {
+    background: color-mix(in srgb, var(--tint) 65%, transparent);
   }
+}
+
+@media screen {
+  .monitor-dock, .rotas-bottom-nav--fixed {
+    position: fixed;
+    z-index: 30;
+    inset: auto max(10px, env(safe-area-inset-right, 0px))
+      max(8px, env(safe-area-inset-bottom, 0px)) max(10px, env(safe-area-inset-left, 0px));
+    margin-inline: auto;
+  }
+}
+
+@media print {
+  #monitorDockFallback, #monitorDockReact { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dock-tabs button:active { transform: none; }
 }
