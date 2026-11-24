@@ -15,6 +15,7 @@
   --motion-navigation: 250ms;
   --motion-modal-open: 250ms;
   --motion-modal-close: 150ms;
+  --motion-modal-scale: .96;
   --motion-panel-expand: 250ms;
   --motion-loading-cycle: 720ms;
   --interaction-ease: cubic-bezier(.2, .65, .35, 1);
@@ -511,8 +512,14 @@ main[tabindex="-1"]:focus { outline: none; }
 .btn:not(:disabled):hover, .icon-btn:not(:disabled):hover, .direction-volta:not(:disabled):hover { background: var(--tint); }
 .btn.danger:not(:disabled):hover { background: var(--danger-bg); }
 .btn.primary:not(:disabled):hover, .direction-ida:not(:disabled):hover { border-color: var(--blue-hover); background: var(--blue-hover); }
-.btn:disabled, .direction-btn:disabled { opacity: .58; }
-.btn[aria-busy="true"] { cursor: progress; }
+:is(.btn, .icon-btn, .direction-btn, .nav-btn):disabled {
+  opacity: .58;
+  cursor: not-allowed;
+}
+:is(.btn, .icon-btn, .direction-btn, .nav-btn)[aria-busy="true"] {
+  opacity: .85;
+  cursor: progress;
+}
 
 .icon-btn {
   display: grid;
@@ -1105,7 +1112,11 @@ html:has(.modal-mask) { overflow: hidden; }
 
 .scanner-notice {
   display: grid;
+  align-content: safe center;
   gap: 3px;
+  block-size: 5rem;
+  overflow: auto;
+  overscroll-behavior: contain;
   margin: 8px 0 11px;
   padding: 8px 10px;
   border-inline-start: 3px solid var(--blue);
@@ -1116,8 +1127,21 @@ html:has(.modal-mask) { overflow: hidden; }
   overflow-wrap: anywhere;
 }
 
-.scanner-success { border-color: var(--success); background: var(--success-bg); color: var(--success); }
-.scanner-error { border-color: var(--danger); background: var(--danger-bg); color: var(--danger); }
+.scanner-notice[data-state="pending"] { font-weight: 700; }
+.scanner-notice[data-state="success"] { border-color: var(--success); background: var(--success-bg); color: var(--success); }
+.scanner-notice[data-state="duplicate"] { border-color: var(--warning-line); background: var(--warning-bg); color: var(--warning); }
+.scanner-notice[data-state="error"] { border-color: var(--danger); background: var(--danger-bg); color: var(--danger); }
+.scanner-result-title { display: flex; align-items: center; gap: 6px; }
+.scanner-check {
+  flex: none;
+  width: 1.125rem;
+  height: 1.125rem;
+  animation: scanner-check-in var(--motion-microinteraction) var(--motion-surface-ease);
+}
+.scanner-check path {
+  stroke-dasharray: 1;
+  animation: scanner-check-draw var(--motion-navigation) var(--motion-surface-ease);
+}
 .scanner-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .scanner-actions .btn { padding-inline: 9px; }
 .scanner-manual form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
@@ -1212,7 +1236,15 @@ html:has(.modal-mask) { overflow: hidden; }
 
 .view-enter { animation: page-fade-in var(--motion-navigation) var(--motion-surface-ease); }
 .dialog-enter > .modal-mask { animation: dialog-backdrop-in var(--motion-modal-open) ease-out; }
-.dialog-enter > .modal-mask > .modal { animation: view-in var(--motion-modal-open) var(--motion-surface-ease); }
+.dialog-enter > .modal-mask > .modal {
+  animation: dialog-in var(--motion-modal-open) var(--motion-surface-ease);
+}
+.modal-mask.is-closing {
+  animation: dialog-backdrop-out var(--motion-modal-close) var(--motion-surface-ease) both;
+}
+.modal-mask.is-closing > .modal {
+  animation: dialog-out var(--motion-modal-close) var(--motion-surface-ease) both;
+}
 .scanner-notice {
   transition: background-color var(--motion-microinteraction) ease,
     border-color var(--motion-microinteraction) ease, color var(--motion-microinteraction) ease;
@@ -1232,6 +1264,14 @@ html:has(.modal-mask) { overflow: hidden; }
 @keyframes page-fade-in { from { opacity: .9; } }
 @keyframes view-in { from { opacity: .88; transform: translateY(3px); } }
 @keyframes dialog-backdrop-in { from { opacity: 0; } }
+@keyframes dialog-in { from { opacity: 0; transform: scale(var(--motion-modal-scale)); } }
+@keyframes dialog-backdrop-out { from { opacity: var(--dialog-backdrop-opacity, 1); } to { opacity: 0; } }
+@keyframes dialog-out {
+  from { opacity: var(--dialog-opacity, 1); transform: var(--dialog-transform, none); }
+  to { opacity: 0; transform: scale(var(--motion-modal-scale)); }
+}
+@keyframes scanner-check-in { from { opacity: 0; } }
+@keyframes scanner-check-draw { from { stroke-dashoffset: 1; } }
 @keyframes panel-loading-spin { to { transform: rotate(1turn); } }
 
 @media (max-width: 870px) {

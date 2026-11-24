@@ -235,11 +235,11 @@ async function load(withSpin=false){if(!S.token)return;S.loadError='';if(withSpi
     else warn(e);
     render();
   }}
-async function refresh(){if(!S.token||!S.data||S.checking||S.busy||S.loading||S.modal||document.hidden)return;
+async function refresh(){if(!S.token||!S.data||S.checking||S.busy||S.loading||S.modal||closingDialog||document.hidden)return;
   const {data,token,year,day}=S;
   S.checking=true;try{
     const x=await api('updates',{version:data.version,year,day});
-    if(x.changed&&!S.modal&&!S.busy&&!S.loading&&S.data===data&&S.token===token&&S.year===year&&S.day===day){S.data=x;render();}
+    if(x.changed&&!S.modal&&!closingDialog&&!S.busy&&!S.loading&&S.data===data&&S.token===token&&S.year===year&&S.day===day){S.data=x;render();}
   }
   catch(e){if(S.token===token)warn(e);}finally{S.checking=false;}}
 setInterval(refresh,60000);
@@ -259,8 +259,9 @@ function canManageStudent(student){
 }
 function canEditRoute(route){return Boolean(route&&(role()==='secretaria'||(role()==='escola'&&!route.compartilhada)));}
 function canSee(name){if(name==='profile')return role()==='monitor';if(name==='users'||name==='schools')return role()==='secretaria';if(role()==='monitor')return ['dashboard','students','attendance','reports'].includes(name);return true;}
-let renderedView='', renderedModalType='', renderedMenu=false;
+let renderedView='', renderedModalType='', renderedMenu=false, closingDialog=false;
 function render(){
+  if(closingDialog&&S.token)return;
   const app=$('app');
   const reactDock=$('monitorDockReact');
   const fallbackDock=$('monitorDockFallback');
@@ -829,39 +830,54 @@ function routeSchoolFields(selected){
     <div class="select-list">${schools.map(school=>`<label class="check-row"><input type="checkbox" name="escolaIds" value="${E(school.id)}" ${selected.includes(school.id)?'checked':''}><span>${E(school.nome)}</span></label>`).join('')||'<p class="assignment-empty">Cadastre uma escola ativa para vincular.</p>'}</div>
   </fieldset>`;
 }
-function scannerNoticeClass(m){
-  return 'scanner-notice'+(m.error?' scanner-error':m.result?' scanner-success':'');
+function scannerNoticeState(m){
+  if(m.pending)return 'pending';
+  if(m.error)return SCANNER_FAILURE_REASONS.get(m.error.trim().replace(/^(?:(?:Error|Erro|Exception):\s*)+/i,''))==='existing-call'?'duplicate':'error';
+  if(m.result?.duplicate)return 'duplicate';
+  if(m.result)return m.result.call||m.result.registradoEm?'success':'error';
+  return 'idle';
 }
-function scannerNoticeText(m){
-  if(m.pending)return E(m.pending);
+function scannerNoticeText(m,state){
+  if(state==='pending')return E(m.pending);
   if(m.error)return E(m.error);
+  if(state==='error')return 'O sistema não confirmou o registro. Tente novamente.';
   const result=m.result;
   if(!result)return m.mode==='live'?'Aproxime o QR Code do crachá.':'A imagem é lida no aparelho.';
   const schoolName=find('schools',result.schoolId)?.nome;
-  return `<strong>${result.duplicate?'Embarque já registrado':'Embarque registrado'}</strong><span>${E([result.studentName,result.badgeCode,schoolName,timeHuman(result.registradoEm)].filter(Boolean).join(' · '))}</span>`;
+  const check=state==='success'?'<svg class="scanner-check" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path pathLength="1" d="m5 12 4 4L19 6"/></svg>':'';
+  const details=[result.studentName,result.badgeCode,schoolName,timeHuman(result.registradoEm)].filter(Boolean).join(' · ');
+  return `<strong class="scanner-result-title">${check}${state==='duplicate'?'Embarque já registrado':'Embarque registrado'}</strong>${details?`<span>${E(details)}</span>`:''}`;
+}
+function scannerFrame(live){
+  return `<div class="scanner-frame ${live?'scanner-live':''}">
+    ${live?'<video id="qrVideo" playsinline autoplay muted aria-label="Prévia da câmera"></video><span class="scanner-target" aria-hidden="true"></span>':`<div class="scanner-emblem">${icon('qr')}</div><span>Posicione o QR Code do crachá no centro</span>`}
+  </div>`;
+}
+function scannerActionLabel(m,live){
+  return m.cameraWindow?'Voltar ao leitor':live||m.photoOnly?'Tirar foto':m.result?'Ler próximo':'Abrir leitor ao vivo';
+}
+function scannerActionType(m,live){return live||m.photoOnly?'scanPhoto':'scanNext';}
+function scannerActions(m,live){
+  const busy=m.pending?'disabled':'';
+  return `<div class="scanner-actions">
+    <button type="button" class="btn primary" id="scannerAction" data-act="${scannerActionType(m,live)}" ${busy}>${scannerActionLabel(m,live)}</button>
+    ${m.cameraWindow||!live&&!m.photoOnly?`<button type="button" class="btn" data-act="scanPhoto" ${busy}>Tirar foto</button>`:''}
+    <button type="button" class="btn" data-act="scanFile" ${busy}>Escolher foto</button>
+  </div>`;
 }
 function scannerDialog(m){
-  const busy=Boolean(m.pending);
-  const inTab=Boolean(m.cameraWindow);
-  const live=m.mode==='live'&&!inTab;
-  const label=inTab?'Voltar ao leitor':live||m.photoOnly?'Tirar foto':m.result?'Ler próximo':'Abrir leitor ao vivo';
-  const action=live||m.photoOnly?'scanPhoto':'scanNext';
+  const live=m.mode==='live'&&!m.cameraWindow;
+  const state=scannerNoticeState(m);
   return `<div class="scanner-body">
-    <div class="scanner-frame ${live?'scanner-live':''}">
-      ${live?'<video id="qrVideo" playsinline autoplay muted aria-label="Prévia da câmera"></video><span class="scanner-target" aria-hidden="true"></span>':`<div class="scanner-emblem">${icon('qr')}</div><span>${m.result?'Crachá identificado':'Posicione o QR Code do crachá no centro'}</span>`}
-    </div>
-    <div id="scannerNotice" class="${scannerNoticeClass(m)}" role="status" tabindex="-1">
-      ${inTab?'Leitor aberto em outra aba.':scannerNoticeText(m)}
+    ${scannerFrame(live)}
+    <div id="scannerNotice" class="scanner-notice" data-state="${state}" role="status" aria-atomic="true" tabindex="-1">
+      ${m.cameraWindow?'Leitor aberto em outra aba.':scannerNoticeText(m,state)}
     </div>
     <input id="scannerCapture" type="file" accept="image/*" capture="environment" hidden>
     <input id="scannerFile" type="file" accept="image/*" hidden>
-    <div class="scanner-actions">
-      <button type="button" class="btn primary" id="scannerAction" data-act="${action}" ${busy?'disabled':''}>${label}</button>
-      ${inTab||!live&&!m.photoOnly?`<button type="button" class="btn" data-act="scanPhoto" ${busy?'disabled':''}>Tirar foto</button>`:''}
-      <button type="button" class="btn" data-act="scanFile" ${busy?'disabled':''}>Escolher foto</button>
-    </div>
+    ${scannerActions(m,live)}
     <details id="scannerManual" class="scanner-manual" ${m.typed&&m.error?'open':''}><summary>Digitar código do crachá</summary>
-      <form id="modalForm" data-form="scannerCode"><label for="scannerCode">Código do crachá</label><input class="control" id="scannerCode" name="code" placeholder="RC-7K9P-4M2A" value="${E(m.typed)}" maxlength="200" autocomplete="off" autocapitalize="off" spellcheck="false" required ${busy?'disabled':''}><button class="btn" type="submit" ${busy?'disabled':''}>Registrar</button></form>
+      <form id="modalForm" data-form="scannerCode"><label for="scannerCode">Código do crachá</label><input class="control" id="scannerCode" name="code" placeholder="RC-7K9P-4M2A" value="${E(m.typed)}" maxlength="200" autocomplete="off" autocapitalize="off" spellcheck="false" required><button class="btn" type="submit" ${m.pending?'disabled aria-busy="true"':''}>Registrar</button></form>
     </details>
   </div>`;
 }
@@ -945,7 +961,7 @@ title='Novo ano letivo';sub='Os estudantes antigos permanecem no histórico. Cad
   }
   return `<div class="modal-mask" data-act="overlay"><div class="modal ${m.type==='studentImport'?'import-modal':['scanner','absence','routeDay','assign','monitorSetup'].includes(m.type)?'transport-modal':''}" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="modal-head"><div><h2 id="modalTitle" tabindex="-1">${E(title)}</h2><p>${E(sub)}</p></div>${m.mandatory?'':`<button class="icon-btn" data-act="closeModal" type="button" aria-label="Fechar">${icon('close')}</button>`}</div>${body}</div></div>`;
 }
-function modalActions(mandatory=false,label='Salvar alterações'){return `<div class="modal-actions">${mandatory?'<button class="btn ghost" type="button" data-act="logout">← Voltar ao login</button>':'<button class="btn" type="button" data-act="closeModal">Cancelar</button>'}<button class="btn primary" type="submit" ${S.busy?'disabled':''}>${S.busy?'Salvando…':label}</button></div>`;}
+function modalActions(mandatory=false,label='Salvar alterações'){return `<div class="modal-actions">${mandatory?'<button class="btn ghost" type="button" data-act="logout">← Voltar ao login</button>':'<button class="btn" type="button" data-act="closeModal">Cancelar</button>'}<button class="btn primary" type="submit" ${S.busy?'disabled aria-busy="true"':''}>${S.busy?'Salvando…':label}</button></div>`;}
 function csvCell(v){const s=String(v===undefined?'':v);const safe=/^[=+@\-]/.test(s)?"'"+s:s;return '"'+safe.replace(/"/g,'""')+'"';}
 function exportCSV(what){let headers=[],rows=[];
   if(what==='students'){
@@ -1133,18 +1149,42 @@ async function submitStudentImport(form, m) {
 async function mutate(action,data,msg='Alterações salvas com sucesso.'){
   if(S.busy)return;S.busy=true;
   try{
-    const res=await api(action,data);S.modal=null;S.busy=false;await load();
+    const res=await api(action,data);
+    if(S.modal){
+      await dismissDialog();
+      render();
+      $('conteudo')?.focus({preventScroll:true});
+    }
+    S.busy=false;await load();
     const feedback=res.studentName?res.studentName+' · '+(res.status==='PRESENTE'?'Presente':'Ausente'):msg;
     if(feedback)message(feedback);
     return res;
   }
   catch(e){S.busy=false;warn(e);render();return null;}}
 async function registerCall(payload){return mutate('attendance',{day:S.day,sentido:S.sentido,routeId:S.route,...payload},'Chamada registrada.');}
-function closeModal(){
-  const m=S.modal;
-  if(!m||m.mandatory||(m.pending&&m.type!=='scanner')||S.busy)return;
+async function dismissDialog(){
   stopCamera();
   S.modal=null;
+  const mask=document.querySelector('.modal-mask');
+  if(!mask||window.matchMedia('(prefers-reduced-motion: reduce)').matches)return;
+  const dialog=mask.querySelector('.modal');
+  // Continue from the current appearance if the opening animation is interrupted.
+  const maskStyle=getComputedStyle(mask);
+  const dialogStyle=getComputedStyle(dialog);
+  mask.style.setProperty('--dialog-backdrop-opacity',maskStyle.opacity);
+  dialog.style.setProperty('--dialog-opacity',dialogStyle.opacity);
+  dialog.style.setProperty('--dialog-transform',dialogStyle.transform);
+  closingDialog=true;
+  mask.inert=true;
+  mask.classList.add('is-closing');
+  const animations=[...mask.getAnimations(),...dialog.getAnimations()];
+  await Promise.allSettled(animations.map(animation=>animation.finished));
+  closingDialog=false;
+}
+async function closeModal(){
+  const m=S.modal;
+  if(!m||m.mandatory||(m.pending&&m.type!=='scanner')||S.busy)return;
+  await dismissDialog();
   render();
   if (m.returnAction) {
     const trigger = Array.from(document.querySelectorAll('[data-act][data-type]')).find(button =>
@@ -1168,9 +1208,10 @@ function closeModal(){
   if(m.type==='routeDay')document.querySelector('[data-act="routeDay"]')?.focus();
   if(m.type==='mergeRoutes')Array.from(document.querySelectorAll('[data-act="mergeRoutes"]')).find(button=>button.dataset.id===m.id)?.focus();
   if(m.type==='password')document.querySelector(S.view==='profile'?'.monitor-profile [data-act="password"]':'.topright [data-act="password"]')?.focus();
+  if(document.activeElement===document.body)$('conteudo')?.focus({preventScroll:true});
 }
 async function changePassword(form){const d=formData(form);if(d.next!==d.confirm){message('A confirmação não corresponde à nova senha.',true);return;}
-  if(S.busy)return;S.busy=true;try{const r=await api('changePassword',d);S.busy=false;if(S.data)S.data.user=r.user;S.modal=null;await load(true);message('Sua senha foi atualizada.');}catch(e){S.busy=false;warn(e);render();}}
+  if(S.busy)return;S.busy=true;try{const r=await api('changePassword',d);if(S.data)S.data.user=r.user;if(S.modal)await dismissDialog();S.busy=false;await load(true);message('Sua senha foi atualizada.');}catch(e){S.busy=false;warn(e);render();}}
 function logout(){
   stopCamera();
   api('logout').catch(()=>{});
@@ -1314,7 +1355,10 @@ function cameraFallback(m,error){
   m.mode='photo';
   m.result=null;
   m.error=error||'A câmera ao vivo não abriu no painel. Abra o leitor ao vivo ou escolha uma foto do crachá.';
-  updateScanner(m);
+  if(!$('scannerNotice')){
+    render();
+    $('scannerNotice')?.focus({preventScroll:true});
+  }else updateScanner(m);
 }
 function stopCamera(){
   const m=S.modal;
@@ -1358,7 +1402,7 @@ async function scanPhoto(file){
   m.pending='Lendo o crachá…';
   m.result=null;
   m.error='';
-  render();
+  updateScanner(m);
   try{
     const code=await readPhoto(file);
     if(S.modal===m)await saveScan(m,code);
@@ -1389,17 +1433,26 @@ function updateScanner(m){
     }
     return;
   }
-  if(m.mode!=='live'){
-    render();
-    if(!m.pending)$('scannerNotice')?.focus();
-    return;
-  }
   const notice=$('scannerNotice');
-  notice.className=scannerNoticeClass(m);
-  notice.innerHTML=scannerNoticeText(m);
-  for(const control of document.querySelectorAll('.scanner-body button, #scannerCode')){
-    control.disabled=Boolean(m.pending);
+  const live=m.mode==='live';
+  const frame=notice.previousElementSibling;
+  if(live!==frame.classList.contains('scanner-live')){
+    frame.outerHTML=scannerFrame(live);
   }
+  if($('scannerAction').dataset.act!==scannerActionType(m,live)){
+    $('scannerAction').parentElement.outerHTML=scannerActions(m,live);
+  }
+  const state=scannerNoticeState(m);
+  notice.dataset.state=state;
+  notice.innerHTML=scannerNoticeText(m,state);
+  notice.scrollTop=0;
+  $('scannerAction').textContent=scannerActionLabel(m,live);
+  const pending=Boolean(m.pending);
+  for(const button of document.querySelectorAll('.scanner-body button')){
+    button.disabled=pending;
+  }
+  $('modalForm').querySelector('button[type="submit"]').setAttribute('aria-busy',String(pending&&Boolean(m.typed)));
+  if(!live&&!pending&&!$('scannerManual').contains(document.activeElement))notice.focus({preventScroll:true});
 }
 async function saveScan(m,code,typed=false){
   if(S.modal!==m||m.pending==='Registrando embarque…')return;
@@ -1432,7 +1485,7 @@ async function saveScan(m,code,typed=false){
   }
 }
 async function handleClick(e){const b=e.target.closest('[data-act]');if(!b)return;const act=b.dataset.act,id=b.dataset.id,type=b.dataset.type;
-  if(S.modal&&S.busy)return;
+  if(closingDialog||(S.modal&&S.busy))return;
   if (act === 'studentImport') { openStudentImport(); return; }
   if (act === 'resetStudentImport' && S.modal?.type === 'studentImport') {
     const { year, escolaId } = S.modal;
@@ -1441,7 +1494,7 @@ async function handleClick(e){const b=e.target.closest('[data-act]');if(!b)retur
     $('studentWorkbook')?.focus();
     return;
   }
-  if(act==='overlay'){if(e.target===b)closeModal();return;}
+  if(act==='overlay'){if(e.target===b)await closeModal();return;}
   if(act==='menu'){S.menu=!S.menu;render();$('portalMenu')?.focus({preventScroll:true});return;}
   if(act==='nav'){
     if (b.dataset.view === S.view && !S.menu) return;
@@ -1470,7 +1523,7 @@ async function handleClick(e){const b=e.target.closest('[data-act]');if(!b)retur
     if(role()!=='secretaria'||!isActive(find('routes',id)))return;
     S.modal={type:'mergeRoutes',id};render();$('f_secondaryId')?.focus();return;
   }
-  if(act==='closeModal'){closeModal();return;}
+  if(act==='closeModal'){await closeModal();return;}
   if(act==='badge'){await printBadge(id);return;}
   if(act==='replaceBadge'){const student=find('students',id);if(!student||!canManageStudent(student)||!student.crachaCodigo||!isActive(student))return;stopCamera();S.modal={type:'replaceBadge',id,currentCode:student.crachaCodigo};render();return;}
   if(act==='assign'){
@@ -1509,7 +1562,7 @@ async function handleClick(e){const b=e.target.closest('[data-act]');if(!b)retur
   if(act==='scanFile'){chooseScanPhoto();return;}
 }
 async function handleSubmit(e){const form=e.target;e.preventDefault();
-  if (S.busy || !form.isConnected) return;
+  if (S.busy || closingDialog || !form.isConnected) return;
   if(form.id==='loginForm'){
     if(S.busy)return;S.busy=true;const x=formData(form);render();
     try{
@@ -1596,7 +1649,7 @@ async function handleSubmit(e){const form=e.target;e.preventDefault();
     if(!allowed||!point&&!sameInactivePoint){message('Selecione uma rota autorizada e um ponto de embarque válido.',true);return;}
     const moved=student.rotaId!==x.rotaId;
     const changedPoint=student.pontoId!==x.pontoId;
-    if(!moved&&!changedPoint){message('Nenhuma alteração foi feita.');closeModal();return;}
+    if(!moved&&!changedPoint){message('Nenhuma alteração foi feita.');await closeModal();return;}
     const feedback=moved?(student.rotaId?'Rota do estudante alterada.':'Estudante vinculado à rota.'):'Ponto de embarque atualizado.';
     await mutate('save',{type:'student',year:student.ano,item:{id:m.id,rotaId:x.rotaId,pontoId:x.pontoId}},feedback);
     return;
@@ -1621,7 +1674,11 @@ async function handleSubmit(e){const form=e.target;e.preventDefault();
   await mutate('save',{type:what,year:S.year,item:x});
 }
 function handleChange(e){const target=e.target,id=target.id;
-  if(id==='scannerCapture'||id==='scannerFile'){scanPhoto(target.files[0]).catch(warn);return;}
+  if(id==='scannerCapture'||id==='scannerFile'){
+    const file=target.files[0];
+    target.value='';
+    scanPhoto(file).catch(warn);return;
+  }
   if(S.modal?.type==='assign'&&target.name==='routeId'){syncAssignmentForm($('modalForm'));return;}
   if(id==='yearSelect'){stopCamera();S.year=target.value;S.filters={search:'',school:'',route:'',stop:''};S.route='';S.callSchool='';S.callStop='';load(true);return;}
   if(id==='filterSchool'){
@@ -1667,7 +1724,7 @@ document.addEventListener('click',e=>{handleClick(e).catch(warn);});
 document.addEventListener('submit', async e => {
   const request = handleSubmit(e);
   const button = e.submitter || e.target.querySelector('button[type="submit"]');
-  const showPending = S.busy && button?.isConnected && !button.disabled;
+  const showPending = S.busy && !closingDialog && button?.isConnected && !button.disabled;
   if (showPending) {
     button.disabled = true;
     button.setAttribute('aria-busy', 'true');
@@ -1705,8 +1762,8 @@ if (visualViewport) {
   syncDialogViewport();
 }
 document.addEventListener('keydown',e=>{
-  if(e.key!=='Escape')return;
-  if(S.modal&&!S.modal.mandatory)closeModal();
+  if(e.key!=='Escape'||closingDialog)return;
+  if(S.modal&&!S.modal.mandatory)closeModal().catch(warn);
   else if(!S.modal&&S.menu){
     S.menu=false;
     render();
