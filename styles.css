@@ -10,7 +10,15 @@
   --card-padding: 16px;
   --panel-padding: clamp(16px, 2.2vw, 24px);
   --section-gap: 16px;
+  --motion-touch: 100ms;
+  --motion-microinteraction: 180ms;
+  --motion-navigation: 250ms;
+  --motion-modal-open: 250ms;
+  --motion-modal-close: 150ms;
+  --motion-panel-expand: 250ms;
+  --motion-loading-cycle: 720ms;
   --interaction-ease: cubic-bezier(.2, .65, .35, 1);
+  --motion-surface-ease: cubic-bezier(.22, 1, .36, 1);
   --navy: #071d41;
   --dark-ink: #fff;
   --dark-text: #d5e3fa;
@@ -462,9 +470,11 @@ main[tabindex="-1"]:focus { outline: none; }
 .hero p { margin: 0; color: var(--text); }
 .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
 
-.btn, .icon-btn, .direction-btn {
-  transition: background-color .18s var(--interaction-ease), color .18s var(--interaction-ease),
-    border-color .18s var(--interaction-ease);
+.btn, .icon-btn, .direction-btn, .nav-btn, .monitor-dock button {
+  transition: background-color var(--motion-microinteraction) var(--interaction-ease),
+    color var(--motion-microinteraction) var(--interaction-ease),
+    border-color var(--motion-microinteraction) var(--interaction-ease),
+    opacity var(--motion-touch) var(--interaction-ease);
 }
 
 .btn {
@@ -827,7 +837,7 @@ html:has(.modal-mask) { overflow: hidden; }
   color: var(--dark-ink);
   box-shadow: 0 8px 24px #0003;
   font-size: .9375rem;
-  animation: toast-in .18s ease-out;
+  animation: toast-in var(--motion-microinteraction) ease-out;
 }
 
 .toast.error { background: var(--danger-bg); color: var(--danger); }
@@ -915,6 +925,7 @@ html:has(.modal-mask) { overflow: hidden; }
 .direction-btn {
   display: flex;
   align-items: center;
+  min-width: 0;
   gap: 9px;
   min-height: 71px;
   padding: 10px 12px;
@@ -938,6 +949,7 @@ html:has(.modal-mask) { overflow: hidden; }
 }
 
 .direction-ida .direction-icon { background: var(--surface); }
+.direction-icon + span { min-width: 0; overflow-wrap: anywhere; }
 .direction-btn strong, .direction-btn small { display: block; line-height: 1.25; }
 .direction-btn strong { font-size: clamp(.875rem, 1.7vw, 1.0625rem); }
 .direction-btn small { margin-top: 3px; font-size: .75rem; font-weight: 650; }
@@ -1198,11 +1210,13 @@ html:has(.modal-mask) { overflow: hidden; }
   .scanner-actions, .scanner-manual form { grid-template-columns: minmax(0, 1fr); }
 }
 
-.nav-btn { transition: background-color .16s ease, color .16s ease; }
-.view-enter { animation: view-in .18s var(--interaction-ease); }
-.dialog-enter > .modal-mask { animation: dialog-backdrop-in .15s ease-out; }
-.dialog-enter > .modal-mask > .modal { animation: view-in .18s var(--interaction-ease); }
-.scanner-notice { transition: background-color .16s ease, border-color .16s ease, color .16s ease; }
+.view-enter { animation: view-in var(--motion-navigation) var(--motion-surface-ease); }
+.dialog-enter > .modal-mask { animation: dialog-backdrop-in var(--motion-modal-open) ease-out; }
+.dialog-enter > .modal-mask > .modal { animation: view-in var(--motion-modal-open) var(--motion-surface-ease); }
+.scanner-notice {
+  transition: background-color var(--motion-microinteraction) ease,
+    border-color var(--motion-microinteraction) ease, color var(--motion-microinteraction) ease;
+}
 
 .panel-loading { display: flex; align-items: center; gap: 9px; color: var(--text); }
 .panel-loading::before {
@@ -1212,7 +1226,7 @@ html:has(.modal-mask) { overflow: hidden; }
   border: 2px solid var(--line);
   border-block-start-color: var(--blue);
   border-radius: 50%;
-  animation: panel-loading-spin .72s linear infinite;
+  animation: panel-loading-spin var(--motion-loading-cycle) linear infinite;
 }
 
 @keyframes view-in { from { opacity: .88; transform: translateY(3px); } }
@@ -1220,7 +1234,7 @@ html:has(.modal-mask) { overflow: hidden; }
 @keyframes panel-loading-spin { to { transform: rotate(1turn); } }
 
 @media (max-width: 870px) {
-  .menu-enter > .sidebar { animation: view-in .18s var(--interaction-ease); }
+  .menu-enter > .sidebar { animation: view-in var(--motion-navigation) var(--motion-surface-ease); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1286,7 +1300,6 @@ html:has(.modal-mask) { overflow: hidden; }
   min-height: 66px;
   padding: 10px;
   border-radius: 14px;
-  transition: background-color .16s ease, border-color .16s ease;
 }
 .monitor-home .direction-btn strong { font-size: clamp(.875rem, 2.7vw, 1.0625rem); }
 .monitor-home .direction-volta { background: var(--tint); }
