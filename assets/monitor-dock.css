@@ -1,2 +1,2 @@
 /*! tailwindcss v4.3.5 | MIT License | https://tailwindcss.com */
-#monitorDockReact{display:none}@media (max-width:870px){#monitorDockReact:not([hidden]){display:block}body:has(#monitorDockReact:not([hidden]) .rotas-bottom-nav) .monitor-dock{display:none}}
+#monitorDockReact{display:none}@media (max-width:870px){#monitorDockReact:not([hidden]){display:block}body:has(#monitorDockFallback[data-focused]) #monitorDockReact,body:has(#monitorDockReact:not([hidden]) .rotas-bottom-nav):not(:has(#monitorDockFallback[data-focused])) .monitor-dock{display:none}}

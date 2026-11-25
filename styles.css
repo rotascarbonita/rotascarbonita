@@ -1524,7 +1524,9 @@ html:has(.modal-mask) { overflow: hidden; }
 }
 
 @media screen and (min-width: 871px) {
-  body:has(.monitor-shell) > .site-footer { padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px)); }
+  body:has(.monitor-shell) .footer-inner > div {
+    max-inline-size: calc((100% - 30rem) / 2 - 8px);
+  }
 }
 
 
