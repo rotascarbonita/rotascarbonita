@@ -48,7 +48,7 @@ async function createBackend(url, publicKey) {
   };
   async function rpc(action, payload = {}) {
     const { data, error } = await client.rpc('rotas_api', { action, payload }).abortSignal(AbortSignal.timeout(action === 'importStudents' ? 45000 : 20000));
-    if (error) throw Error(errorMessage(error));
+    if (error) throw Object.assign(Error(errorMessage(error)), { code: error.code });
     return data;
   }
   async function watch() {
@@ -208,7 +208,6 @@ const val=(key,id,prop='nome')=>(find(key,id)||{})[prop]||'—';
 const initials=n=>String(n||'').trim().split(/\s+/).slice(0,2).map(x=>x[0]).join('').toUpperCase();
 const DIRECTION={IDA:'Para Escola',VOLTA:'Para Casa'};
 const STUDENT_SHIFTS=[['MANHA','Manhã'],['TARDE','Tarde']];
-function supportsStudentShifts(){return Boolean(S.data?.studentFeatures||S.data?.studentFeaturesVersion);}
 const isActive=x=>x&&x.ativo!==false&&x.ativo!=='false'&&x.ativo!=='NAO';
 let loadRequest=0;
 const LOAD_FEEDBACK_DELAY=300;
@@ -302,8 +301,8 @@ function routeSchools(route){return a('schools').filter(school=>routeSchoolIds(r
 function routeSchoolNames(route){return routeSchools(route).map(school=>school.nome).join(' · ');}
 function canManageStudent(student){
   return canEdit()||role()==='monitor'&&(student
-    ? isActive(student)&&Boolean(find('routes',student.rotaId))
-      &&(!student.pontoId||find('stops',student.pontoId)?.rotaId===student.rotaId)
+    ? isActive(student)&&(student.cadastroPendenteProprio===true&&!student.rotaId
+      ||Boolean(find('routes',student.rotaId))&&(!student.pontoId||find('stops',student.pontoId)?.rotaId===student.rotaId))
     : a('routes').some(isActive));
 }
 function canEditRoute(route){return Boolean(route&&(role()==='secretaria'||(role()==='escola'&&!route.compartilhada)));}
@@ -768,7 +767,9 @@ function filteredStudents(){const f=S.filters,term=f.search.trim().toLowerCase()
 function studentCard(s){
   const pending=!s.rotaId;
   const editButton=`<button type="button" class="link-btn" data-act="edit" data-type="student" data-id="${E(s.id)}" aria-label="${E((pending?'Definir rota e ponto de ':'Alterar rota ou ponto de ')+s.nome)}">${pending?'Definir rota e ponto':'Alterar rota ou ponto'}</button>`;
-  const actions=canManageStudent(s)?`<button type="button" class="link-btn" data-act="edit" data-type="student" data-id="${E(s.id)}">Editar estudante</button><button type="button" class="link-btn" data-act="badge" data-id="${E(s.id)}">▦ Crachá QR</button>${isActive(s)&&s.crachaCodigo?`<button type="button" class="link-btn" data-act="replaceBadge" data-id="${E(s.id)}">Substituir crachá perdido</button>`:''}`:role()==='monitor'&&pending?editButton:'';
+  const badge=s.qrToken&&s.crachaCodigo
+    ?`<button type="button" class="link-btn" data-act="badge" data-id="${E(s.id)}">▦ Crachá QR</button>${isActive(s)?`<button type="button" class="link-btn" data-act="replaceBadge" data-id="${E(s.id)}">Substituir crachá perdido</button>`:''}`:'';
+  const actions=canManageStudent(s)?`<button type="button" class="link-btn" data-act="edit" data-type="student" data-id="${E(s.id)}">Editar estudante</button>${badge}`:role()==='monitor'&&pending?editButton:'';
   return `<article class="student-card" data-student-id="${E(s.id)}"><div class="student-head"><div class="student-avatar">${E(initials(s.nome))}</div><div class="student-head-title"><b title="${E(s.nome)}">${E(s.nome)}</b><small>${E(val('schools',s.escolaId))}</small></div><span class="tag ${pending?'warn':''}">${pending?'Sem rota':'Vinculado'}</span></div><div class="detail-list">${detail('Código do crachá',s.crachaCodigo||'Atualize os dados')}${detail('Rota',val('routes',s.rotaId))}${canEdit()&&s.logradouro?detail('Logradouro',s.logradouro):''}${detail('Ponto',val('stops',s.pontoId))}${s.responsavel?detail('Responsável',s.responsavel):''}${s.celular?detail('Celular',s.celular):''}</div><div class="student-actions">${actions}</div></article>`;
 }
 function detail(label,value){return `<div class="detail-item"><span>${E(label)}</span><b title="${E(value)}">${E(value)}</b></div>`;}
@@ -955,7 +956,7 @@ function attendanceRoster(route){
   const stopOf=student=>calls.has(student.id)?calls.get(student.id).pontoId:student.pontoId;
   const points=a('stops').filter(point=>point.rotaId===route?.id).sort(compareStops);
   const stopId=points.some(point=>point.id===S.callStop)?S.callStop:'';
-  const items=a('students').filter(student=>route&&(calls.has(student.id)||(student.rotaId===route.id&&isActive(student)))&&
+  const items=a('students').filter(student=>route&&(calls.has(student.id)||(student.escolaId&&student.rotaId===route.id&&isActive(student)))&&
     (!schoolId||schoolOf(student)===schoolId)&&(!stopId||stopOf(student)===stopId)).sort((first,second)=>first.nome.localeCompare(second.nome,'pt-BR'));
   return {schools,schoolId,calls,schoolOf,items,points,stopId};
 }
@@ -1289,20 +1290,18 @@ title='Novo ano letivo';sub='Os estudantes antigos permanecem no histórico. Cad
   else{const type=m.type,item=m.draft||{},edit=!!m.id;title=(edit?'Editar ':'Cadastrar ')+TYPE[type].toLowerCase();sub=type==='user'?'Defina as permissões do e-mail cadastrado no Supabase.':'Os dados serão salvos e atualizados nos demais acessos.';submit=edit?'Salvar alterações':'Cadastrar';
     const schools=a('schools'), schoolId=role()==='escola'?user().escolaId:item.escolaId||'';
     const routeId=item.rotaId||'';
-    const routes=a('routes').filter(route=>routeSchoolIds(route).includes(schoolId)&&(isActive(route)||route.id===routeId));
+    const routes=a('routes').filter(route=>(!schoolId||routeSchoolIds(route).includes(schoolId))&&(isActive(route)||route.id===routeId));
     const points=a('stops').filter(point=>point.rotaId===routeId&&(isActive(point)||point.id===item.pontoId)).sort(compareStops);
-    if(type==='student'&&role()==='monitor'&&edit&&!find('students',m.id)?.rotaId){
+    if(type==='student'&&role()==='monitor'&&edit&&!canManageStudent(find('students',m.id))){
       const original=find('students',m.id);
       const linked=Boolean(original?.rotaId);
       const moving=linked&&routeId!==original.rotaId;
       title=linked?'Alterar rota ou ponto':'Vincular estudante à rota';
-      sub=linked?'Corrija o ponto de embarque ou transfira o estudante para outra rota autorizada.':'Selecione uma rota autorizada e o ponto de embarque.';
+      sub=linked?'Corrija o ponto de embarque ou transfira o estudante para outra rota autorizada.':'Selecione uma rota autorizada. O ponto pode ser informado depois.';
       const guidance=moving
         ?'<p class="tip">Ao transferir a rota, o histórico das chamadas e o QR Code do estudante serão preservados.</p>'
         :'<p class="tip">Só aparecem rotas atribuídas ao seu acesso e que atendem à escola do estudante.</p>';
-      const stopWarning=routeId&&!points.some(isActive)
-        ?'<p class="tip warn" role="status">Esta rota não possui ponto ativo para seleção. Solicite o cadastro de um ponto à Secretaria.</p>':'';
-      body=`<form id="modalForm" data-form="student"><div class="tip"><b>${E(item.nome)}</b><div>${E(val('schools',item.escolaId))}</div></div>${selectField('rotaId','Rota do estudante',routes,item.rotaId,'Escolha a rota','required data-cascade="yes"')}${selectField('pontoId','Ponto de embarque',points,item.pontoId,'Selecione o ponto','required')}${guidance}${stopWarning}${modalActions()}</form>`;
+      body=`<form id="modalForm" data-form="student"><div class="tip"><b>${E(item.nome)}</b><div>${E(val('schools',item.escolaId))}</div></div>${selectField('rotaId','Rota do estudante',routes,item.rotaId,'Escolha a rota','required data-cascade="yes"')}${selectField('pontoId','Ponto de embarque',points,item.pontoId,'A definir')}${guidance}${modalActions()}</form>`;
     }else{
       if(type==='school')body=field('nome','Nome da escola',item.nome,'Ex.: Escola Municipal…','required maxlength="140"');
       if(type==='class')body=(role()==='secretaria'?selectField('escolaId','Escola',schools,schoolId,'Selecione a escola','required'):'')+field('nome','Nome da turma',item.nome,'Ex.: 5º ano A','required maxlength="140"');
@@ -1317,25 +1316,21 @@ title='Novo ano letivo';sub='Os estudantes antigos permanecem no histórico. Cad
         body=selectField('rotaId','Rota',editableRoutes,item.rotaId,'Selecione uma rota','required')+field('nome','Nome do ponto',item.nome,'Ex.: Fazenda Boa Vista','required')+field('ordem','Ordem do ponto',item.ordem||'1','Número','type="number" min="1" max="999"');
       }
       if (type === 'student') {
-        const previous = edit ? find('students', m.id) : null;
-        const monitor = role()==='monitor';
         const shifts = item.turnos ?? [];
-        const shiftRequired=!edit||previous?.turnos?.length;
         const shiftField = `<fieldset class="assignment-field">
-          <legend>${fieldLabel('Turno',shiftRequired?'required':'')}${adminForm()&&shiftRequired?'<span class="sr-only">. Selecione pelo menos um turno.</span>':''}</legend>
+          <legend>Turno</legend>
           ${STUDENT_SHIFTS.map(([value,label])=>`<label class="check-row"><input type="checkbox" name="turnos" value="${value}" ${shifts.includes(value)?'checked':''}> ${label}</label>`).join('')}
         </fieldset>`;
-        const guardianRequired = !edit || previous?.responsavel;
-        const identification = (role() !== 'escola' ? selectField('escolaId', 'Escola', schools, schoolId, 'Selecione uma escola', 'required data-cascade="yes"') : '')
-          + field('nome', 'Nome completo do estudante', item.nome, 'Nome e sobrenome', 'required')
+        const identification = (role() !== 'escola' ? selectField('escolaId', 'Escola', schools, schoolId, 'A definir', 'data-cascade="yes"') : '')
+          + field('nome', 'Nome completo do estudante', item.nome, 'Nome e sobrenome', 'required maxlength="140"')
           + shiftField;
-        const transport = selectField('rotaId', 'Rota', routes, item.rotaId, 'A definir', 'data-cascade="yes"'+(monitor?' required':''))
+        const transport = selectField('rotaId', 'Rota', routes, item.rotaId, 'A definir', 'data-cascade="yes"')
           + field('logradouro', 'Logradouro', item.logradouro, 'Rua, avenida ou localidade', 'maxlength="200"')
-          + selectField('pontoId', 'Ponto', points, item.pontoId, 'A definir', monitor&&(!edit||previous?.pontoId||previous?.rotaId!==routeId)?'required':'');
-        const contacts = field('nomeMae', 'Nome completo da mãe', item.nomeMae, 'Nome e sobrenome', 'maxlength="140"' + (!edit || previous?.nomeMae ? ' required' : ''))
-          + field('nomePai', 'Nome completo do pai (opcional)', item.nomePai, 'Nome e sobrenome', 'maxlength="140"')
-          + field('responsavel', 'Responsável', item.responsavel, 'Nome do responsável', guardianRequired ? 'required' : '')
-          + field('celular', 'Celular do responsável', item.celular, '(38) 99999-9999', !edit&&supportsStudentShifts()?'type="tel" required':'type="tel"');
+          + selectField('pontoId', 'Ponto', points, item.pontoId, 'A definir');
+        const contacts = field('nomeMae', 'Nome completo da mãe', item.nomeMae, 'Nome e sobrenome', 'maxlength="140"')
+          + field('nomePai', 'Nome completo do pai', item.nomePai, 'Nome e sobrenome', 'maxlength="140"')
+          + field('responsavel', 'Responsável', item.responsavel, 'Nome do responsável', 'maxlength="140"')
+          + field('celular', 'Celular do responsável', item.celular, '(38) 99999-9999', 'type="tel" maxlength="140"');
         body=adminForm()?formSection('Identificação escolar',identification)+formSection('Transporte',transport)+formSection('Família e contato',contacts):identification+transport+contacts;
       }
       if(type==='user')body=field('nome','Nome completo',item.nome,'Nome do usuário','required')
@@ -1344,7 +1339,8 @@ title='Novo ano letivo';sub='Os estudantes antigos permanecem no histórico. Cad
         +(item.perfil==='escola'?selectField('escolaId','Escola',schools,item.escolaId,'Selecione uma escola','required'):'')
         +(edit?`<div class="field"><label for="f_ativo">Situação</label><select id="f_ativo" name="ativo"><option value="SIM" ${isActive(item)?'selected':''}>Ativo</option><option value="NAO" ${!isActive(item)?'selected':''}>Inativo</option></select></div>`:'')
         +`<div class="tip">Use o e-mail de uma conta já criada no Authentication do Supabase. Aqui você define o perfil e as permissões. A senha é a mesma dessa conta.</div>`;
-      body=`<form id="modalForm" data-form="${E(type)}"${adminForm()?' class="admin-form"':''}>${adminForm()?'<p class="form-requirements">Campos com * são obrigatórios.</p>':''}<div class="form-grid">${body}</div>${modalActions(false,submit)}</form>`;
+      const requirements=type==='student'?'<p class="form-requirements">Só o nome completo é obrigatório. Os demais dados podem ser preenchidos depois.</p>':adminForm()?'<p class="form-requirements">Campos com * são obrigatórios.</p>':'';
+      body=`<form id="modalForm" data-form="${E(type)}"${adminForm()?' class="admin-form"':''}>${requirements}<div class="form-grid">${body}</div>${modalActions(false,submit)}</form>`;
     }
   }
   return `<div class="modal-mask" data-act="overlay"><div class="modal ${m.type==='studentImport'?'import-modal':['scanner','absence','routeDay','assign','monitorSetup'].includes(m.type)?'transport-modal':''}" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="modal-head"><div><h2 id="modalTitle" tabindex="-1">${E(title)}</h2><p>${E(sub)}</p></div>${m.mandatory?'':`<button class="icon-btn" data-act="closeModal" type="button" aria-label="Fechar">${icon('close')}</button>`}</div>${body}</div></div>`;
@@ -1486,7 +1482,6 @@ async function printBadge(id){
   }
 }
 function openModal(type,id,trigger){
-  // O monitor só pode editar rota e ponto de estudantes presentes na visão autorizada.
   if(role()==='monitor'){
     if(type!=='student')return;
     const student=id?find('students',id):null;
@@ -1494,6 +1489,10 @@ function openModal(type,id,trigger){
   }
   stopCamera();const key={student:'students',school:'schools',class:'classes',route:'routes',stop:'stops',user:'users'}[type];const old=id?find(key,id):null;
   const draft=old?{...old}:{};if(type==='user'&&!id)draft.perfil='monitor';if(type==='student'&&role()==='escola')draft.escolaId=user().escolaId;
+  if(type==='student'&&!id&&role()==='monitor'){
+    const routes=a('routes').filter(isActive);
+    if(routes.length===1)draft.rotaId=routes[0].id;
+  }
   if(type==='route'&&!id){const schools=importSchools();draft.escolaIds=schools.length===1?[schools[0].id]:[];}
   S.modal={type,id:id||null,draft,returnAction:trigger?.dataset.act};render();}
 function formData(form){return Object.fromEntries(new FormData(form).entries());}
@@ -1540,7 +1539,7 @@ async function submitStudentImport(form, m) {
     if (S.modal === m) ($('importSummary') || $('studentWorkbook'))?.focus();
   }
 }
-async function mutate(action,data,msg='Alterações salvas com sucesso.'){
+async function mutate(action,data,msg='Alterações salvas com sucesso.',onError=warn){
   if(S.busy)return;S.busy=true;
   try{
     const res=await api(action,data);
@@ -1554,7 +1553,25 @@ async function mutate(action,data,msg='Alterações salvas com sucesso.'){
     if(feedback)message(feedback);
     return res;
   }
-  catch(e){S.busy=false;warn(e);render();return null;}}
+  catch(e){S.busy=false;onError(e);render();return null;}}
+function studentSaveError(error){
+  const detail=error.message||'';
+  if(sessionEnded(detail)){warn(error);return;}
+  const form=$('modalForm');
+  if(S.modal?.type==='student'&&form?.dataset.form==='student'){
+    Object.assign(S.modal.draft,formData(form));
+    if(form.elements.namedItem('turnos'))S.modal.draft.turnos=new FormData(form).getAll('turnos');
+  }
+  const known=error.code==='P0001'||error.code==='42501'||detail==='Sem conexão com o sistema. Confira a internet e tente novamente.';
+  message(known?detail:'Não foi possível salvar o estudante. Confira a conexão e tente novamente.',true);
+}
+function saveStudentForm(form,payload,feedback){
+  const submit=form.querySelector('button[type="submit"]');
+  submit.disabled=true;
+  submit.setAttribute('aria-busy','true');
+  submit.textContent='Salvando…';
+  return mutate('save',payload,feedback,studentSaveError);
+}
 async function registerCall(payload){return mutate('attendance',{day:S.day,sentido:S.sentido,routeId:S.route,...payload},'Chamada registrada.');}
 async function dismissDialog(){
   stopCamera();
@@ -2067,37 +2084,51 @@ async function handleSubmit(e){const form=e.target;e.preventDefault();
     x.escolaIds=new FormData(form).getAll('escolaIds');
     if(!x.escolaIds.length){message('Selecione as escolas atendidas pela rota.',true);form.querySelector('input[name="escolaIds"]')?.focus();return;}
   }
-  x.id=m.id||'';if(what==='student'&&role()==='monitor'&&m.id&&!find('students',m.id)?.rotaId){
+  x.id=m.id||'';
+  if(what==='student'&&S.data?.studentRegistrationVersion!==1){
+    message('O cadastro de estudantes está aguardando uma atualização. Avise a Secretaria e tente novamente.',true);
+    return;
+  }
+  if(what==='student'&&role()==='monitor'&&m.id&&!canManageStudent(find('students',m.id))){
     const student=find('students',m.id);
     if(!student)return;
     const routes=a('routes').filter(route=>isActive(route)&&routeSchoolIds(route).includes(student.escolaId));
     const allowed=routes.some(route=>route.id===x.rotaId);
     const point=a('stops').find(stop=>stop.id===x.pontoId&&stop.rotaId===x.rotaId&&isActive(stop));
     const sameInactivePoint=student.rotaId===x.rotaId&&student.pontoId===x.pontoId;
-    if(!allowed||!point&&!sameInactivePoint){message('Selecione uma rota autorizada e um ponto de embarque válido.',true);return;}
+    if(!allowed||x.pontoId&&!point&&!sameInactivePoint){message('Selecione uma rota autorizada e, se informar um ponto, escolha um ponto dessa rota.',true);return;}
+    m.draft={...m.draft,...x};
     const moved=student.rotaId!==x.rotaId;
     const changedPoint=student.pontoId!==x.pontoId;
     if(!moved&&!changedPoint){message('Nenhuma alteração foi feita.');await closeModal();return;}
     const feedback=moved?(student.rotaId?'Rota do estudante alterada.':'Estudante vinculado à rota.'):'Ponto de embarque atualizado.';
-    await mutate('save',{type:'student',year:student.ano,item:{id:m.id,rotaId:x.rotaId,pontoId:x.pontoId}},feedback);
+    await saveStudentForm(form,{type:'student',year:student.ano,item:{id:m.id,rotaId:x.rotaId,pontoId:x.pontoId}},feedback);
     return;
   }
   if(what==='student'){
-    const shifts=new FormData(form).getAll('turnos');
-    const previous=m.id?find('students',m.id):null;
-    delete x.turnos;
-    if((!m.id||previous?.turnos?.length)&&!shifts.length){message('Selecione pelo menos um turno.',true);return;}
-    if(shifts.length){
-      if(!supportsStudentShifts()){message('O banco precisa da atualização de turnos para salvar este cadastro.',true);return;}
-      x.turnos=shifts;
+    x.nome=x.nome?.trim();
+    if(!x.nome){message('Informe o nome completo do estudante.',true);form.elements.nome?.focus();return;}
+    x.turnos=new FormData(form).getAll('turnos');
+    m.draft={...m.draft,...x};
+    if(m.id){
+      const previous=find('students',m.id);
+      if(!previous)return;
+      for(const [key,value] of Object.entries(x)){
+        if(key==='id')continue;
+        const original=previous[key];
+        if(key==='turnos'?value.join(',')===(original||[]).join(','):value===String(original??''))delete x[key];
+      }
     }
-    if(!m.id)x.contatosResponsaveis=[{nome:x.responsavel,telefone:x.celular}];
-    const contacts=previous?.contatosResponsaveis||[];
-    if(supportsStudentShifts()&&previous&&(x.responsavel!==(previous.responsavel||'')||x.celular!==(previous.celular||''))&&(contacts.length||x.celular.trim())){
-      x.contatosResponsaveis=[{...contacts[0],nome:x.responsavel,telefone:x.celular},...contacts.slice(1)];
+    for(const key of ['escolaId','rotaId','pontoId']){
+      if(key in x)x[key]=x[key]||null;
     }
+    if(role()==='escola')x.escolaId=user().escolaId;
+    if(!m.id)m.requestId??=crypto.randomUUID();
+    await saveStudentForm(form,{type:'student',year:S.year,item:x,...(m.requestId?{requestId:m.requestId}:{})},
+      m.id?'Alterações salvas com sucesso.':'Estudante cadastrado.');
+    return;
   }
-  if(what==='student'||what==='route'||what==='class'){x.ano=S.year;if(role()==='escola')x.escolaId=user().escolaId;}
+  if(what==='route'||what==='class'){x.ano=S.year;if(role()==='escola')x.escolaId=user().escolaId;}
   if(what==='user'){if(m.id)x.id=m.id;await mutate('createUser',{item:x},'Usuário cadastrado ou atualizado.');return;}
   await mutate('save',{type:what,year:S.year,item:x});
 }
@@ -2129,7 +2160,7 @@ function handleChange(e){const target=e.target,id=target.id;
     const draft={...S.modal.draft,...formData(form)};
     if(form.elements.namedItem('turnos'))draft.turnos=new FormData(form).getAll('turnos');
     if(target.name==='escolaId'){
-      if(!routeSchoolIds(find('routes',draft.rotaId)).includes(draft.escolaId)){draft.rotaId='';draft.pontoId='';}
+      if(draft.escolaId&&!routeSchoolIds(find('routes',draft.rotaId)).includes(draft.escolaId)){draft.rotaId='';draft.pontoId='';}
     }
     if(target.name==='rotaId')draft.pontoId='';
     S.modal.draft=draft;render();$(id)?.focus({preventScroll:true});
