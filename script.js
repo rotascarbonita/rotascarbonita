@@ -220,7 +220,10 @@ function todayLocal(){
   const byType=Object.fromEntries(parts.map(({type,value})=>[type,value]));
   return byType.year+'-'+byType.month+'-'+byType.day;
 }
-function dateHuman(s){if(!s)return '—';const [y,m,d]=String(s).slice(0,10).split('-');return d+'/'+m+'/'+y;}
+function dateHuman(s){
+  const parts=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(s??''));
+  return parts?`${parts[3]}/${parts[2]}/${parts[1]}`:'—';
+}
 function timeHuman(s){
   const date=new Date(s);
   return s&&!isNaN(date.getTime())?new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',hour:'2-digit',minute:'2-digit'}).format(date):'';
@@ -890,7 +893,7 @@ function absencePanel(routeId='',schoolId=''){
   const alerts=a('absenceAlerts').filter(alert=>(!routeId||alert.rotaId===routeId)&&(!schoolId||alert.escolaId===schoolId));
   const pending=alerts.filter(alert=>!alert.motivo);
   const recorded=alerts.filter(alert=>alert.motivo);
-  const row=alert=>`<li class="absence-row"><div><strong>${E(alert.nome)}</strong><small>${E(val('schools',alert.escolaId))} · ${E(val('routes',alert.rotaId))} · ${alert.dias} dias · ${dateHuman(alert.inicio)} a ${dateHuman(alert.fim)}</small></div><button class="btn" type="button" data-act="absence" data-id="${E(alert.id)}" aria-label="${E((alert.motivo?'Ver motivo de ':'Justificar ausência de ')+alert.nome)}">${alert.motivo?'Ver motivo':'Justificar'}</button></li>`;
+  const row=alert=>`<li class="absence-row"><div><strong>${E(alert.nome)}</strong><small>${E(val('schools',alert.escolaId))} · ${E(val('routes',alert.rotaId))} · ${E(alert.dias)} dias · ${dateHuman(alert.inicio)} a ${dateHuman(alert.fim)}</small></div><button class="btn" type="button" data-act="absence" data-id="${E(alert.id)}" aria-label="${E((alert.motivo?'Ver motivo de ':'Justificar ausência de ')+alert.nome)}">${alert.motivo?'Ver motivo':'Justificar'}</button></li>`;
   const historyKey=JSON.stringify(['absence',routeId,schoolId]);
   return `<section class="panel absence-panel" aria-labelledby="absenceTitle" data-disclosure-context="${E(historyKey)}">
     <div class="absence-head ${pending.length?'has-alerts':''}"><span class="absence-icon">${icon(pending.length?'alert':'checkCircle')}</span><div><h2 id="absenceTitle" tabindex="-1">Alertas de ausência ${pending.length?`<span class="absence-count" aria-label="${pending.length} a justificar">${pending.length}</span>`:''}</h2><p>${pending.length?'Estudantes com 3 ou mais dias seguidos sem embarque.':'Nenhuma ausência a justificar.'}</p></div></div>
@@ -1179,7 +1182,7 @@ function syncAssignmentForm(form){
 function absenceDialog(m){
   const alert=m.alert;
   return `<form id="modalForm" data-form="absence">
-    <div class="absence-period"><strong>${E(val('routes',alert.rotaId))}</strong><span>${alert.dias} dias · ${dateHuman(alert.inicio)} a ${dateHuman(alert.fim)}</span></div>
+    <div class="absence-period"><strong>${E(val('routes',alert.rotaId))}</strong><span>${E(alert.dias)} dias · ${dateHuman(alert.inicio)} a ${dateHuman(alert.fim)}</span></div>
     <div class="field"><label for="absenceReason">Motivo</label><textarea id="absenceReason" name="reason" rows="4" maxlength="500" placeholder="Descreva brevemente o motivo…" required>${E(m.draftReason)}</textarea></div>
     <p class="boarding-hint">Registre apenas o necessário para o acompanhamento.</p>
     ${modalActions(false,'Salvar motivo')}
@@ -1215,10 +1218,12 @@ function scannerNoticeState(m){
   if(m.error)return SCANNER_FAILURE_REASONS.get(m.error.trim().replace(/^(?:(?:Error|Erro|Exception):\s*)+/i,''))==='existing-call'?'duplicate':'error';
   if(m.result?.duplicate)return 'duplicate';
   if(m.result)return m.result.call||m.result.registradoEm?'success':'error';
+  if(m.cameraPaused)return 'paused';
   return 'idle';
 }
 function scannerNoticeText(m,state){
   if(state==='pending')return E(m.pending);
+  if(state==='paused')return 'Câmera pausada. Selecione Retomar câmera para voltar à leitura.';
   if(m.error)return E(m.error);
   if(state==='error')return 'O sistema não confirmou o registro. Tente novamente.';
   const result=m.result;
@@ -1234,14 +1239,15 @@ function scannerFrame(live){
   </div>`;
 }
 function scannerActionLabel(m,live){
+  if(m.cameraPaused)return 'Retomar câmera';
   return m.cameraWindow?'Voltar ao leitor':live||m.photoOnly?'Tirar foto':m.result?'Ler próximo':'Abrir leitor ao vivo';
 }
-function scannerActionType(m,live){return live||m.photoOnly?'scanPhoto':'scanNext';}
+function scannerActionType(m,live){return !m.cameraPaused&&(live||m.photoOnly)?'scanPhoto':'scanNext';}
 function scannerActions(m,live){
   const busy=m.pending?'disabled':'';
   return `<div class="scanner-actions">
     <button type="button" class="btn primary" id="scannerAction" data-act="${scannerActionType(m,live)}" ${busy}>${scannerActionLabel(m,live)}</button>
-    ${m.cameraWindow||!live&&!m.photoOnly?`<button type="button" class="btn" data-act="scanPhoto" ${busy}>Tirar foto</button>`:''}
+    ${m.cameraWindow||m.cameraPaused||!live&&!m.photoOnly?`<button type="button" class="btn" data-act="scanPhoto" ${busy}>Tirar foto</button>`:''}
     <button type="button" class="btn" data-act="scanFile" ${busy}>Escolher foto</button>
   </div>`;
 }
@@ -1344,7 +1350,12 @@ title='Novo ano letivo';sub='Os estudantes antigos permanecem no histórico. Cad
   return `<div class="modal-mask" data-act="overlay"><div class="modal ${m.type==='studentImport'?'import-modal':['scanner','absence','routeDay','assign','monitorSetup'].includes(m.type)?'transport-modal':''}" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="modal-head"><div><h2 id="modalTitle" tabindex="-1">${E(title)}</h2><p>${E(sub)}</p></div>${m.mandatory?'':`<button class="icon-btn" data-act="closeModal" type="button" aria-label="Fechar">${icon('close')}</button>`}</div>${body}</div></div>`;
 }
 function modalActions(mandatory=false,label='Salvar alterações'){return `<div class="modal-actions">${mandatory?'<button class="btn ghost" type="button" data-act="logout">← Voltar ao login</button>':'<button class="btn" type="button" data-act="closeModal">Cancelar</button>'}<button class="btn primary" type="submit" ${S.busy?'disabled aria-busy="true"':''}>${S.busy?'Salvando…':label}</button></div>`;}
-function csvCell(v){const s=String(v===undefined?'':v);const safe=/^[=+@\-]/.test(s)?"'"+s:s;return '"'+safe.replace(/"/g,'""')+'"';}
+function csvCell(value){
+  const text=String(value===undefined?'':value);
+  const needsLiteral=/^[\s\u200b-\u200f\u2060]*[\t\r\n=+@\-＝＋＠－]/u.test(text);
+  const safe=needsLiteral?"'"+text:text;
+  return '"'+safe.replace(/"/g,'""')+'"';
+}
 function exportCSV(what){let headers=[],rows=[];
   if(what==='students'){
     const showAddress = canEdit();
@@ -1620,8 +1631,19 @@ function openScanner(direction){
 function nextScan(photo=false){
   const m=S.modal;
   if(m?.type!=='scanner'||m.pending)return;
+  if(!photo&&m.cameraPaused){
+    if(document.hidden)return;
+    m.cameraPaused=false;
+    m.error='';
+    m.result=null;
+    updateScanner(m);
+    $('scannerAction')?.focus({preventScroll:true});
+    startLiveCamera(m);
+    return;
+  }
   if(!photo&&m.cameraWindow&&!m.cameraWindow.closed){m.cameraWindow.focus();return;}
   stopCamera();
+  m.cameraPaused=false;
   m.mode=!photo&&m.useLive?'live':'photo';
   m.error='';
   m.result=null;
@@ -1636,6 +1658,7 @@ function chooseScanPhoto(){
   const m=S.modal;
   if(m?.type!=='scanner'||m.pending)return;
   stopCamera();
+  m.cameraPaused=false;
   m.mode='photo';
   render();
   $('scannerFile').click();
@@ -1695,7 +1718,7 @@ function openLiveCameraTab(m){
   }catch(e){stopCamera();cameraFallback(m);}
 }
 async function startLiveCamera(m){
-  if(S.modal!==m||m.live)return;
+  if(S.modal!==m||m.live||document.hidden)return;
   const live={stream:null,timer:null};
   m.live=live;
   const reader=window.loadRotasAsset('QRReader');
@@ -1753,6 +1776,8 @@ function stopCamera(){
     clearInterval(m.live.timer);
     m.live.stream?.getTracks().forEach(track=>track.stop());
     m.live=null;
+    const video=$('qrVideo');
+    if(video)video.srcObject=null;
   }
   if(m.reader){
     window.removeEventListener('message',m.reader.receive);
@@ -1764,6 +1789,13 @@ function stopCamera(){
     m.cameraWindow=null;
     if(!cameraWindow.closed)cameraWindow.close();
   }
+}
+function pauseLiveCamera(){
+  const m=S.modal;
+  if(m?.type!=='scanner'||!m.live)return;
+  stopCamera();
+  m.cameraPaused=true;
+  if($('scannerNotice'))updateScanner(m);
 }
 async function readPhoto(file){
   await window.loadRotasAsset('QRReader');
@@ -1784,6 +1816,7 @@ async function scanPhoto(file){
   const m=S.modal;
   if(!file||m?.type!=='scanner'||m.pending)return;
   stopCamera();
+  m.cameraPaused=false;
   m.mode='photo';
   m.pending='Lendo o crachá…';
   m.result=null;
@@ -1826,7 +1859,15 @@ function updateScanner(m){
     frame.outerHTML=scannerFrame(live);
   }
   if($('scannerAction').dataset.act!==scannerActionType(m,live)){
-    $('scannerAction').parentElement.outerHTML=scannerActions(m,live);
+    const actions=$('scannerAction').parentElement;
+    const focused=actions.contains(document.activeElement)?document.activeElement:null;
+    actions.outerHTML=scannerActions(m,live);
+    if(focused){
+      const primary=$('scannerAction');
+      const replacement=focused.id===primary.id?primary:
+        [...primary.parentElement.children].find(button=>button.dataset.act===focused.dataset.act);
+      (replacement||primary).focus({preventScroll:true});
+    }
   }
   const state=scannerNoticeState(m);
   notice.dataset.state=state;
@@ -1844,6 +1885,7 @@ async function saveScan(m,code,typed=false){
   if(S.modal!==m||m.pending==='Registrando embarque…')return;
   if(typed){
     stopCamera();
+    m.cameraPaused=false;
     m.mode='photo';
   }
   m.result=null;
@@ -2151,8 +2193,14 @@ document.addEventListener('keydown',e=>{
     $('portalMenu')?.focus({preventScroll:true});
   }
 });
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});
-window.addEventListener('pagehide',stopCamera);
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden)pauseLiveCamera();
+  else refresh();
+});
+window.addEventListener('pagehide',()=>{
+  pauseLiveCamera();
+  stopCamera();
+});
 if(S.token)load();else render();
 })();
 

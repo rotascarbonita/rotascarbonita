@@ -827,7 +827,7 @@ html:has(.modal-mask) { overflow: hidden; }
 .report-table td, .report-table th { overflow-wrap: anywhere; }
 .report-scroll-hint { margin: 0 0 8px; color: var(--text); font-size: .875rem; }
 .report-scroll-hint span { margin-inline-end: 4px; color: var(--blue); }
-.report-export { min-height: 44px; border-color: var(--control-line); }
+.btn.report-export { min-height: 44px; border-color: var(--control-line); }
 
 @media (max-width: 430px) {
   .report-table .data-table { min-width: 23rem; }
@@ -1764,4 +1764,25 @@ html:has(.modal-mask) { overflow: hidden; }
   .admin-shell .data-table th,
   .admin-shell .data-table td { padding: var(--space-2); }
   .admin-shell .list-actions { justify-content: flex-start; }
+}
+
+@media screen {
+  :is(.site-width, .shell, .content, .panel, .table-wrap, .field, .form-grid, .form-grid > *, .hero > *) {
+    min-inline-size: 0;
+  }
+
+  :is(.site-identity, .utility-inner, .footer-inner, .hero, .panel-head, .actions, .modal, .btn) {
+    overflow-wrap: anywhere;
+  }
+
+  :is(.btn, .control, .field input, .field select, .field textarea) { max-inline-size: 100%; }
+  .table-wrap { max-inline-size: 100%; }
+}
+
+@media screen and (max-width: 560px) {
+  .utility-inner, .topbar, .topright { flex-wrap: wrap; }
+  .contrast-toggle, .topright { flex: 0 1 auto; min-inline-size: 0; }
+  .admin-shell #studentFilters .panel-head { grid-template-columns: minmax(0, 1fr); }
+  .admin-shell #studentFilters .panel-head .actions { justify-content: flex-start; }
+  .btn { white-space: normal; }
 }
