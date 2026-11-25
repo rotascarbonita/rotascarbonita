@@ -427,6 +427,7 @@ function render(){
     else if(focusedSummary)focusDisclosure(main,focusedSummary);
   }
   updateLoadFeedback();
+  observeReportTables();
   if (S.modal) {
     app.querySelector('.modal').scrollTop = modalScroll;
     if (openingDialog) $('modalTitle')?.focus({preventScroll:true});
@@ -435,6 +436,45 @@ function render(){
   if(S.modal?.type==='assign')syncAssignmentForm($('modalForm'));
   if(S.modal?.mandatory)$('modalTitle')?.focus();
 }
+function visibleMonitorDock(){
+  return [...document.querySelectorAll('#monitorDockReact nav, #monitorDockFallback nav')]
+    .find(dock=>dock.offsetHeight);
+}
+function measureDockClearance(){
+  const dock=visibleMonitorDock();
+  if(dock)document.documentElement.style.setProperty('--measured-dock-clearance',
+    Math.ceil(window.innerHeight-dock.getBoundingClientRect().top+8)+'px');
+}
+const dockSizeObserver=new ResizeObserver(measureDockClearance);
+window.addEventListener('resize',measureDockClearance);
+const reactDockHost=$('monitorDockReact');
+new MutationObserver(()=>{
+  const dock=reactDockHost.firstElementChild;
+  if(dock)dockSizeObserver.observe(dock);
+}).observe(reactDockHost,{childList:true});
+document.addEventListener('focusin',event=>{
+  const target=event.target;
+  const main=target.closest?.('.monitor-shell .main');
+  if(!main||target===main)return;
+  requestAnimationFrame(()=>{
+    if(document.activeElement!==target)return;
+    const dock=visibleMonitorDock()?.getBoundingClientRect();
+    if(!dock)return;
+    const rect=target.getBoundingClientRect();
+    const gap=8;
+    const insideMain=main.scrollHeight>main.clientHeight&&getComputedStyle(main).overflowY==='auto';
+    const scrollport=insideMain?main:window;
+    const bounds=insideMain?main.getBoundingClientRect():{top:0,bottom:window.innerHeight};
+    const top=Math.max(0,bounds.top);
+    const intersectsDock=rect.right+gap>dock.left&&rect.left-gap<dock.right;
+    const bottom=Math.min(window.innerHeight,bounds.bottom,intersectsDock?dock.top:Infinity);
+    const below=rect.bottom+gap-bottom;
+    const above=rect.top-gap-top;
+    if(below>0||above<0){
+      scrollport.scrollBy({top:below>0?Math.ceil(below):Math.floor(above),behavior:'instant'});
+    }
+  });
+});
 function syncMonitorDock(reactDock,fallbackDock){
   if(reactDock.dataset.view!==S.view)reactDock.dataset.view=S.view;
   if(!fallbackDock.firstElementChild){
@@ -444,6 +484,7 @@ function syncMonitorDock(reactDock,fallbackDock){
         ${icon(symbol)}<span>${LABEL[view]}</span>
       </button>`).join('')}
     </nav>`;
+    dockSizeObserver.observe(fallbackDock.firstElementChild);
   }
   for(const button of fallbackDock.querySelectorAll('button')){
     if(button.dataset.view===S.view)button.setAttribute('aria-current','page');
@@ -498,6 +539,7 @@ function paintSnapshot(reveal=false){
   area.classList.toggle('snapshot-reveal',reveal);
   announceStudentResults();
   updateLoadFeedback();
+  observeReportTables();
   if(!active.isConnected||document.activeElement!==active){
     const nextFocus=focusId&&$(focusId);
     (nextFocus||(active.isConnected?active:main)).focus({preventScroll:true});
@@ -515,7 +557,7 @@ function patchSections(container,source){
     if(previous?.id==='studentFilters'&&next.id==='studentFilters'){
       syncStudentFilters();
       node=previous;
-    }else if(previous?.isEqualNode(next)){
+    }else if((previous?.matches('.report-scroll-hint')&&previous.id===next.id)||previous?.isEqualNode(next)){
       node=previous;
     }else if(previous?.matches('summary')&&next.matches('summary')){
       previous.replaceChildren(...next.childNodes);
@@ -523,7 +565,7 @@ function patchSections(container,source){
     }else if(previous&&(
       (next.dataset.disclosure&&previous.dataset.disclosure===next.dataset.disclosure&&previous.open===next.open)||
       (previous.className===next.className&&previous.id===next.id&&
-        previous.matches('#studentResults,.cards,.school-roster[data-school],.monitor-home,.monitor-grid,.route-guide,.absence-panel,.disclosure-body,.disclosure-inner,.absence-list')&&
+        previous.matches('#studentResults,.cards,.school-roster[data-school],.monitor-home,.monitor-grid,.route-guide,.absence-panel,.disclosure-body,.disclosure-inner,.absence-list,.report-panel,.report-table')&&
         previous.dataset.school===next.dataset.school&&previous.dataset.disclosureContext===next.dataset.disclosureContext))){
       patchSections(previous,next);
       node=previous;
@@ -887,6 +929,35 @@ function routeSummary(){
     return {route,schools,total:schools.reduce((sum,school)=>sum+school.count,0),points:points.filter(point=>point.rotaId===route.id).length};
   });
 }
+function reportTable(id,head,rows){
+  return `<p class="report-scroll-hint" id="${id}ScrollHint" hidden><span aria-hidden="true">↔</span> Role a tabela na horizontal para ver mais colunas.</p>
+  <div class="table-wrap report-table" id="${id}Table" role="region" aria-labelledby="${id}">
+    <table class="data-table"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>
+  </div>`;
+}
+function updateReportTable(region){
+  const overflow=region.scrollWidth-region.clientWidth>1;
+  const hint=$(region.getAttribute('aria-labelledby')+'ScrollHint');
+  hint.hidden=!overflow;
+  if(overflow){
+    region.tabIndex=0;
+    region.setAttribute('aria-describedby',hint.id);
+  }else{
+    region.removeAttribute('tabindex');
+    region.removeAttribute('aria-describedby');
+  }
+}
+const reportSizeObserver=new ResizeObserver(entries=>{
+  for(const {target} of entries)if(target.isConnected)updateReportTable(target.closest('.report-table'));
+});
+function observeReportTables(){
+  reportSizeObserver.disconnect();
+  for(const region of document.querySelectorAll('.report-table')){
+    updateReportTable(region);
+    reportSizeObserver.observe(region);
+    reportSizeObserver.observe(region.firstElementChild);
+  }
+}
 function reportsScreen(){
   const pending=a('students').filter(student=>!student.rotaId);
   const rows=routeSummary().map(({route,schools,total,points})=>`<tr>
@@ -894,14 +965,13 @@ function reportsScreen(){
     <td><ul class="school-counts">${schools.map(school=>`<li>${E(school.nome)} <strong>${school.count}</strong></li>`).join('')}</ul></td>
     <td>${points}</td></tr>`).join('');
   return hero('Relatórios e impressão','Acompanhe os totais por rota e por escola.')+stats()+`
-    <div class="panel"><div class="panel-head"><h2 class="panel-title">Consolidado por rota</h2>
-      <button class="btn small" data-act="export" data-what="routesSummary">↓ CSV</button></div>
-      <div class="table-wrap"><table class="data-table"><thead><tr><th>Rota</th><th>Total de estudantes ativos</th><th>Estudantes por escola</th><th>Pontos</th></tr></thead>
-      <tbody>${rows}</tbody></table></div></div>
+    <div class="panel report-panel"><div class="panel-head"><h2 class="panel-title" id="routeReportTitle">Consolidado por rota</h2>
+      <button class="btn small report-export" data-act="export" data-what="routesSummary">Baixar CSV</button></div>
+      ${reportTable('routeReportTitle','<th>Rota</th><th>Total de estudantes ativos</th><th>Estudantes por escola</th><th>Pontos</th>',rows)}</div>
     <div class="panel"><div class="panel-head"><div><div class="panel-title">Aguardando definição de rota</div><div class="panel-sub">${pending.length} estudantes sem rota</div></div></div>
       ${pending.length?pending.map(s=>`<div class="list-row"><div class="list-main"><b>${E(s.nome)}</b><small>${E(val('schools',s.escolaId))} · ${E(val('classes',s.turmaId))}</small></div></div>`).join(''):empty('Todos os estudantes estão vinculados','Não há pendências de rota entre os estudantes visíveis.')}</div>
-    ${role()==='secretaria'?`<div class="panel"><div class="panel-head"><div><div class="panel-title">Histórico recente de alterações</div><div class="panel-sub">Últimos 80 eventos registrados</div></div></div>
-      <div class="table-wrap"><table class="data-table"><thead><tr><th>Data</th><th>Usuário</th><th>Ação</th><th>Tipo</th></tr></thead><tbody>${a('audit').map(x=>`<tr><td>${E(x.data.replace('T',' ').slice(0,19))}</td><td>${E(val('users',x.usuarioId,'nome'))}</td><td>${E(x.acao)}</td><td>${E(x.entidade)}</td></tr>`).join('')}</tbody></table></div></div>`:''}`;
+    ${role()==='secretaria'?`<div class="panel report-panel"><div class="panel-head"><div><h2 class="panel-title" id="auditReportTitle">Histórico recente de alterações</h2><div class="panel-sub">Últimos 80 eventos registrados</div></div></div>
+      ${reportTable('auditReportTitle','<th>Data</th><th>Usuário</th><th>Ação</th><th>Tipo</th>',a('audit').map(x=>`<tr><td>${E(x.data.replace('T',' ').slice(0,19))}</td><td>${E(val('users',x.usuarioId,'nome'))}</td><td>${E(x.acao)}</td><td>${E(x.entidade)}</td></tr>`).join(''))}</div>`:''}`;
 }
 function usersScreen(){
   const users=a('users');

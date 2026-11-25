@@ -816,6 +816,22 @@ html:has(.modal-mask) { overflow: hidden; }
 .tip.warn { border-color: var(--warning-line); background: var(--warning-bg); color: var(--warning); }
 
 .table-wrap { width: 100%; overflow-x: auto; }
+.report-table { overscroll-behavior-inline: contain; }
+.report-table:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.report-table td, .report-table th { overflow-wrap: anywhere; }
+.report-scroll-hint { margin: 0 0 8px; color: var(--text); font-size: .875rem; }
+.report-scroll-hint span { margin-inline-end: 4px; color: var(--blue); }
+.report-export { min-height: 44px; border-color: var(--control-line); }
+
+@media (max-width: 430px) {
+  .report-table .data-table { min-width: 23rem; }
+  .report-table .data-table th, .report-table .data-table td { padding: 8px; }
+}
+
+@media print {
+  .report-scroll-hint { display: none; }
+  .report-table { overflow: visible; }
+}
 .data-table { width: 100%; border-collapse: collapse; font-size: .875rem; }
 .data-table th, .data-table td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: start; }
 .data-table th { background: var(--tint); color: var(--heading); }
@@ -1470,12 +1486,16 @@ html:has(.modal-mask) { overflow: hidden; }
 .monitor-profile-actions .btn { justify-content: flex-start; min-height: 44px; border-radius: var(--monitor-control-radius); }
 
 @media screen and (max-width: 870px) {
+  html:has(.monitor-shell) {
+    scroll-padding-bottom: var(--measured-dock-clearance, calc(87px + env(safe-area-inset-bottom, 0px)));
+  }
   .monitor-shell {
-    --dock-clearance: calc(87px + env(safe-area-inset-bottom, 0px));
+    --dock-clearance: var(--measured-dock-clearance, calc(87px + env(safe-area-inset-bottom, 0px)));
     grid-template-rows: auto 1fr;
     padding-bottom: var(--dock-clearance);
   }
 
+  .monitor-shell .main :focus { scroll-margin-bottom: 8px; }
   .monitor-shell .crumb { display: flex; }
   .monitor-call-shortcut + .crumb { display: none; }
 }
@@ -1557,7 +1577,7 @@ html:has(.modal-mask) { overflow: hidden; }
   border-radius: 1.125rem;
   background: transparent;
   color: var(--text);
-  font-size: .6875rem;
+  font-size: .75rem;
   font-weight: 650;
   line-height: 1.2;
   text-align: center;
