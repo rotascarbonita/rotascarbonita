@@ -6,9 +6,15 @@
   --panel-radius: 12px;
   --control-radius: 8px;
   --monitor-control-radius: 12px;
-  --card-padding: 16px;
-  --panel-padding: clamp(16px, 2.2vw, 24px);
-  --section-gap: 16px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --card-padding: var(--space-4);
+  --panel-padding: clamp(var(--space-4), 2.2vw, var(--space-6));
+  --section-gap: var(--space-4);
   --motion-touch: 100ms;
   --motion-microinteraction: 180ms;
   --motion-navigation: 250ms;
@@ -1615,4 +1621,147 @@ html:has(.modal-mask) { overflow: hidden; }
 
 @media (prefers-reduced-motion: reduce) {
   .dock-tabs button:active { transform: none; }
+}
+
+/* Administrative views share the portal's colors, controls and motion tokens. */
+@media screen {
+  .admin-shell .content {
+    padding-block: var(--space-6) var(--space-8);
+  }
+
+  .admin-shell .hero {
+    align-items: center;
+    gap: var(--space-3) var(--space-6);
+    margin: var(--space-1) 0 var(--space-6);
+  }
+  .admin-shell .hero h1 { margin-block-end: var(--space-1); }
+  .admin-shell .hero p { max-inline-size: 60ch; }
+  .admin-shell .actions { gap: var(--space-2); }
+  .admin-shell .actions .btn[data-act="print"],
+  .admin-shell [data-act="resetFilters"],
+  .admin-shell .list-actions [data-act="disable"],
+  .admin-shell .list-actions [data-act="mergeRoutes"] {
+    border-color: transparent;
+    background: transparent;
+  }
+  .admin-shell .actions .btn[data-act="print"]:hover,
+  .admin-shell [data-act="resetFilters"]:hover,
+  .admin-shell .list-actions [data-act="mergeRoutes"]:hover { background: var(--tint); }
+  .admin-shell .list-actions [data-act="disable"]:hover { background: var(--danger-bg); }
+
+  .admin-shell .sidebar { padding: var(--space-4); }
+  .admin-shell .account { margin-block-start: var(--space-4); padding-block-start: var(--space-3); }
+  .admin-shell .nav-section + .nav-section {
+    margin-block-start: var(--space-3);
+    padding-block-start: var(--space-3);
+    border-block-start: 1px solid var(--line);
+  }
+  .admin-shell .nav-group {
+    margin: 0 var(--space-3) var(--space-1);
+    letter-spacing: .025em;
+    text-transform: none;
+  }
+  .admin-shell .nav-items { gap: var(--space-1); grid-auto-rows: 1fr; }
+  .admin-shell .nav-btn {
+    gap: var(--space-2);
+    min-height: 44px;
+    padding: var(--space-2);
+    border-inline-start-width: 3px;
+    border-radius: var(--control-radius);
+    overflow-wrap: anywhere;
+  }
+  .admin-shell .nav-btn > svg { flex: none; width: 20px; height: 20px; }
+  .admin-shell .nav-btn[aria-current="page"] {
+    color: var(--blue);
+    font-weight: 800;
+  }
+  .admin-shell .nav-btn:focus-visible { outline-offset: -2px; }
+
+  .admin-dashboard-stats .stat:nth-child(-n+2) {
+    border-block-start: 3px solid var(--blue);
+  }
+  .admin-dashboard-stats .stat:nth-child(n+3) {
+    border-block-start: 3px solid var(--line);
+  }
+  .admin-dashboard-stats .stat-head { min-block-size: 32px; }
+  .admin-dashboard-stats .stat-meta { margin-block-start: var(--space-1); }
+
+  .admin-shell #studentFilters .panel-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    margin-block-end: var(--space-3);
+  }
+  .admin-shell .filters { align-items: end; gap: var(--space-3); }
+  .admin-shell .filters > div { min-width: 0; }
+  .filter-label {
+    display: block;
+    margin-block-end: var(--space-1);
+    color: var(--heading);
+    font-size: .875rem;
+    font-weight: 700;
+  }
+  .admin-shell .section-line {
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-3);
+    margin-block: var(--space-6) var(--space-3);
+  }
+  .admin-shell .section-line span { margin-inline-start: var(--space-2); }
+
+  .admin-shell .list-row {
+    min-block-size: 64px;
+    gap: var(--space-2) var(--space-3);
+    padding-block: var(--space-3);
+  }
+  .admin-shell .list-main small { margin-block-start: var(--space-1); }
+  .admin-shell .list-actions { gap: var(--space-1) var(--space-2); }
+  .admin-shell .list-actions .btn,
+  .admin-shell .section-line .btn,
+  .admin-shell #studentFilters .btn { min-height: 44px; }
+  .admin-shell .data-table th,
+  .admin-shell .data-table td {
+    padding: var(--space-3);
+    vertical-align: top;
+  }
+  .admin-shell .data-table th {
+    border-block-end: 1px solid var(--control-line);
+    font-weight: 750;
+  }
+  .admin-shell .data-table tbody tr:last-child td { border-block-end: 0; }
+
+  .form-requirements {
+    margin: 0 0 var(--space-3);
+    color: var(--text);
+    font-size: .875rem;
+  }
+  .required-mark { color: var(--danger); }
+  .admin-form .form-section {
+    min-inline-size: 0;
+    margin: 0;
+    padding: var(--space-3) 0 0;
+    border: 0;
+    border-block-start: 1px solid var(--line);
+  }
+  .admin-form .form-section legend {
+    padding-inline-end: var(--space-2);
+    color: var(--heading);
+    font-size: .9375rem;
+    font-weight: 750;
+  }
+  .admin-form .form-grid { column-gap: var(--space-4); }
+  .admin-form .field { gap: var(--space-1); margin-block-end: var(--space-3); }
+}
+
+@media screen and (max-width: 870px) {
+  .admin-shell .nav-items { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media screen and (max-width: 560px) {
+  .admin-shell .hero { margin-block-end: var(--space-4); }
+  .admin-shell .filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .admin-shell .filters > :first-child,
+  .admin-shell .filters > :last-child { grid-column: 1 / -1; }
+  .admin-shell .data-table th,
+  .admin-shell .data-table td { padding: var(--space-2); }
+  .admin-shell .list-actions { justify-content: flex-start; }
 }

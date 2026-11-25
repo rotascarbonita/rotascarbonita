@@ -399,7 +399,7 @@ function render(){
   const openingMenu=S.menu&&!renderedMenu;
   renderedView=S.view;
   renderedMenu=S.menu;
-  app.innerHTML=`<div class="shell${monitor?' monitor-shell':''}${S.menu?' menu-open':''}${openingMenu?' menu-enter':''}${openingDialog?' dialog-enter':''}">
+  app.innerHTML=`<div class="shell${monitor?' monitor-shell':' admin-shell'}${S.menu?' menu-open':''}${openingMenu?' menu-enter':''}${openingDialog?' dialog-enter':''}">
     <div class="topbar" ${dialogOpen}>
       <div class="topbar-context">
         <button id="portalMenu" class="icon-btn mobile-menu" type="button" data-act="menu" aria-label="Menu de navegação" aria-controls="portalNav" aria-expanded="${S.menu}">${icon('menu')}</button>
@@ -414,10 +414,7 @@ function render(){
       </div>
     </div>
     <aside class="sidebar" id="portalNav" ${dialogOpen}>
-      <div class="nav-group">Gestão do transporte</div>
-      <nav class="nav-items" aria-label="Menu principal">
-        ${NAV.filter(([v])=>canSee(v)).map(([v,ico])=>`<button type="button" class="nav-btn" ${S.view===v?'aria-current="page"':''} data-act="nav" data-view="${v}">${icon(ico)}${LABEL[v]}</button>`).join('')}
-      </nav>
+      ${portalNavigation(monitor)}
       <div class="account">
         <div class="avatar" aria-hidden="true">${E(initials(user().nome))}</div>
         <div class="account-main"><strong>${E(user().nome)}</strong><span>${E({secretaria:'Secretaria Municipal',escola:'Unidade escolar',monitor:'Monitor de transporte'}[role()])}</span></div>
@@ -470,6 +467,17 @@ function prepareMonitorAssets(){
   });
 }
 mobileMonitorDock.addEventListener('change',prepareMonitorAssets);
+function portalNavigation(monitor){
+  const items=NAV.filter(([view])=>canSee(view));
+  const buttons=items=>`${items.map(([v,ico])=>`<button type="button" class="nav-btn" ${S.view===v?'aria-current="page"':''} data-act="nav" data-view="${v}">${icon(ico)}${LABEL[v]}</button>`).join('')}`;
+  if(monitor)return `<div class="nav-group">Gestão do transporte</div><nav class="nav-items" aria-label="Menu principal">${buttons(items)}</nav>`;
+  const section=(title,views)=>`<div class="nav-section" role="group" aria-label="${title}"><div class="nav-group" aria-hidden="true">${title}</div><div class="nav-items">${buttons(views)}</div></div>`;
+  return `<nav aria-label="Menu principal">
+    ${section('Cadastros',items.filter(([view])=>!['attendance','reports','users'].includes(view)))}
+    ${section('Acompanhamento',items.filter(([view])=>['attendance','reports'].includes(view)))}
+    ${items.some(([view])=>view==='users')?section('Administração',items.filter(([view])=>view==='users')):''}
+  </nav>`;
+}
 function visibleMonitorDock(){
   return [...document.querySelectorAll('#monitorDockReact nav, #monitorDockFallback nav')]
     .find(dock=>dock.offsetHeight);
@@ -701,8 +709,15 @@ function loginHtml(){
 function hero(title,description,buttons=''){return `<p class="eyebrow">Ano letivo ${E(S.year)}</p><div class="hero"><div><h1>${E(title)}</h1><p>${E(description)}</p></div><div class="actions">${buttons}<button class="btn" type="button" data-act="print">${icon('print')} Imprimir</button></div></div>`;}
 function plus(type){return `<button class="btn primary" type="button" data-act="new" data-type="${type}">${icon('plus')} ${type==='student'?'Novo estudante':'Adicionar '+TYPE[type].toLowerCase()}</button>`;}
 function stat(title,num,symbol,foot){return `<div class="stat"><div class="stat-head">${E(title)} <span class="stat-ico">${icon(symbol)}</span></div><div class="stat-number">${E(num)}</div><div class="stat-meta">${E(foot)}</div></div>`;}
-function stats(){const assigned=a('students').filter(x=>!!x.rotaId).length;
-  return `<div class="stats">${stat('Estudantes',a('students').length,'people','Cadastrados no ano')}${stat('Rotas ativas',a('routes').filter(isActive).length,'route','Rotas autorizadas')}${stat('Pontos de embarque',a('stops').length,'pin','Pontos cadastrados')}${stat('Com rota definida',assigned,'check',(a('students').length-assigned)+' pendentes')}</div>`;}
+function stats(dashboard=false){
+  const total=a('students').length;
+  const assigned=a('students').filter(student=>!!student.rotaId).length;
+  const students=stat('Estudantes',total,'people','Cadastrados no ano');
+  const linked=stat('Com rota definida',assigned,'check',(total-assigned)+' pendentes');
+  const routes=stat('Rotas ativas',a('routes').filter(isActive).length,'route','Rotas autorizadas');
+  const stops=stat('Pontos de embarque',a('stops').length,'pin','Pontos cadastrados');
+  return `<div class="stats${dashboard?' admin-dashboard-stats':''}">${students}${dashboard?linked+routes+stops:routes+stops+linked}</div>`;
+}
 function content(){switch(S.view){case 'profile':return monitorProfile();case 'dashboard':return dashboard();case 'students':return studentsScreen();case 'schools':return listScreen('school','schools');case 'classes':return listScreen('class','classes');case 'routes':return listScreen('route','routes');case 'stops':return listScreen('stop','stops');case 'users':return usersScreen();case 'attendance':return attendanceScreen();case 'reports':return reportsScreen();default:return dashboard();}}
 function studentFilterOptions(){
   const f=S.filters,routes=a('routes').filter(r=>!f.school||routeSchoolIds(r).includes(f.school));
@@ -732,10 +747,18 @@ function updateStudentResults(){
   results.innerHTML=studentResults(S.view==='dashboard'?items.slice(0,12):items);
   announceStudentResults();
 }
-function filtersHtml(){const f=S.filters;
-  return `<div class="panel" id="studentFilters"><div class="panel-head"><div><div class="panel-title">Encontre estudantes rapidamente</div><div class="panel-sub">Combine escola, rota e ponto para refinar sua busca.</div></div><button class="btn small" data-act="resetFilters">Limpar filtros</button></div><div class="filters"><div class="search"><input class="control" id="searchStudents" aria-label="Buscar estudante" value="${E(f.search)}" placeholder="Buscar por nome ou código RC do crachá…" autocomplete="off"></div>
-  ${studentFilterOptions().map(([id,label,items,value],index)=>`<select class="control" id="${id}" aria-label="Filtrar ${['escola','rota','ponto'][index]}">${filterOptions(label,items,value)}</select>`).join('')}
-  </div><span class="sr-only" id="studentResultStatus" role="status" aria-atomic="true"></span></div>`;}
+function filtersHtml(){
+  const admin=canEdit();
+  const title=admin?'Filtrar estudantes':'Encontre estudantes rapidamente';
+  const searchLabel=admin?'<label class="filter-label" for="searchStudents">Buscar estudante</label>':'';
+  const selectors=studentFilterOptions().map(([id,label,items,value],index)=>{
+    const name=['Escola','Rota','Ponto'][index];
+    const select=`<select class="control" id="${id}" aria-label="Filtrar ${name.toLowerCase()}">${filterOptions(label,items,value)}</select>`;
+    return admin?`<div><label class="filter-label" for="${id}">${name}</label>${select}</div>`:select;
+  }).join('');
+  return `<div class="panel" id="studentFilters"><div class="panel-head"><div><h2 class="panel-title">${title}</h2><div class="panel-sub">${admin?'Filtre por escola, rota e ponto.':'Combine escola, rota e ponto para refinar sua busca.'}</div></div><button class="btn small" data-act="resetFilters">Limpar filtros</button></div><div class="filters"><div>${searchLabel}<div class="search"><input class="control" id="searchStudents" aria-label="Buscar estudante" value="${E(S.filters.search)}" placeholder="${admin?'Nome, turma ou código do crachá':'Buscar por nome ou código RC do crachá…'}" autocomplete="off"></div></div>
+  ${selectors}</div><span class="sr-only" id="studentResultStatus" role="status" aria-atomic="true"></span></div>`;
+}
 function options(items,selected){return items.map(x=>`<option value="${E(x.id)}" ${x.id===selected?'selected':''}>${E(x.nome)}</option>`).join('');}
 function badgeSearchKey(value){return String(value||'').toUpperCase().replace(/[\s-]/g,'');}
 function filteredStudents(){const f=S.filters,term=f.search.trim().toLowerCase();return a('students').filter(x=>(!f.school||x.escolaId===f.school)&&(!f.route||x.rotaId===f.route)&&(!f.stop||x.pontoId===f.stop)&&(!term||x.nome.toLowerCase().includes(term)||(badgeSearchKey(term).length>=3&&badgeSearchKey(x.crachaCodigo).includes(badgeSearchKey(term)))||val('classes',x.turmaId).toLowerCase().includes(term))).sort((x,y)=>x.nome.localeCompare(y.nome,'pt-BR'));}
@@ -763,12 +786,12 @@ function studentResults(items){
   const groups=schoolGroups(items);
   const cards=students=>`<div class="cards">${students.map(studentCard).join('')}</div>`;
   const results=S.filters.route&&groups.length>1?groups.map(([schoolId,students])=>`<section class="school-roster" data-school="${E(schoolId)}">${schoolGroupHeading(schoolId,students.length)}${cards(students)}</section>`).join(''):cards(items);
-  return `<div class="section-line"><h2>Estudantes <span id="studentResultCount">${items.length} ${items.length===1?'registro':'registros'}</span></h2><button class="btn small" data-act="export" data-what="students">↓ CSV</button></div>${items.length?results:empty('Nenhum estudante encontrado','Experimente limpar os filtros ou cadastre novos estudantes.')}`;
+  return `<div class="section-line"><h2>Estudantes <span id="studentResultCount">${items.length} ${items.length===1?'registro':'registros'}</span></h2><button class="btn small" data-act="export" data-what="students">${canEdit()?'Baixar CSV':'↓ CSV'}</button></div>${items.length?results:empty('Nenhum estudante encontrado','Experimente limpar os filtros ou cadastre novos estudantes.')}`;
 }
 function empty(t,p){return `<div class="empty"><div class="empty-icon">◎</div><b>${E(t)}</b><div>${E(p)}</div></div>`;}
 function dashboard(){
   if(role()==='monitor')return monitorDashboard();
-  return hero('Visão geral','Acompanhe estudantes, escolas, rotas e pontos num único lugar.',canEdit()?plus('student'):'')+stats()+filtersHtml()+`<div id="studentResults">${studentResults(filteredStudents().slice(0,12))}</div>`;
+  return hero('Visão geral',role()==='escola'?'Acompanhe os estudantes e as rotas da sua unidade.':'Acompanhe os estudantes e as rotas da rede municipal.',canEdit()?plus('student'):'')+stats(true)+filtersHtml()+`<div id="studentResults">${studentResults(filteredStudents().slice(0,12))}</div>`;
 }
 function studentsScreen(){
   const actions = (canManageStudent() ? plus('student') : '') + (canEdit() ? '<button class="btn" data-act="studentImport">Importar planilha</button>' : '');
@@ -787,7 +810,7 @@ function listScreen(type,key){
     const merge=allowMerge&&isActive(item)?`<button class="btn small" data-act="mergeRoutes" data-id="${E(item.id)}">Unificar</button>`:'';
     return `<div class="list-row">${type==='route'?'':`<div class="list-number">${String(index+1).padStart(2,'0')}</div>`}<div class="list-main"><b>${E(item.nome)}</b><small>${E(subtitles(type,item))}</small></div><div class="list-actions">${routeAction}${editable?`<button class="btn small" data-act="edit" data-type="${type}" data-id="${E(item.id)}">Editar</button>${merge}${isActive(item)?`<button class="btn small danger" data-act="disable" data-type="${type}" data-id="${E(item.id)}">Desativar</button>`:''}`:''}</div></div>`;
   });
-  return hero(title,desc,allowAdd?plus(type):'')+`<div class="panel"><div class="panel-head"><div><div class="panel-title">${title}</div><div class="panel-sub">${data.filter(isActive).length} registros ativos</div></div><button class="btn small" data-act="export" data-what="${key}">↓ CSV</button></div>${rows.length?`<div class="rows">${rows.join('')}</div>`:empty('Nenhum registro','Crie o primeiro cadastro para esta seção.')}</div>`;
+  return hero(title,desc,allowAdd?plus(type):'')+`<div class="panel"><div class="panel-head"><div><div class="panel-title">${title}</div><div class="panel-sub">${data.filter(isActive).length} registros ativos</div></div><button class="btn small" data-act="export" data-what="${key}">Baixar CSV</button></div>${rows.length?`<div class="rows">${rows.join('')}</div>`:empty('Nenhum registro','Crie o primeiro cadastro para esta seção.')}</div>`;
 }
 const ICONS={
   person:'<circle cx="12" cy="8" r="3.25"/><path d="M5 20v-1a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v1"/>',
@@ -1030,8 +1053,17 @@ function usersScreen(){
       ${monitor&&isActive(u)?`<button class="btn small" data-act="assign" data-id="${E(u.id)}">${names.length?'Editar rotas':'Vincular rotas'}</button>`:''}</div></div>`;
     }).join('')}</div></div>`;
 }
-function field(k,label,value,placeholder='',extra=''){return `<div class="field"><label for="f_${k}">${E(label)}</label><input id="f_${k}" name="${k}" value="${E(value||'')}" placeholder="${E(placeholder)}" ${extra}></div>`;}
-function selectField(k,label,items,selected,placeholder='Selecione uma opção',extra=''){return `<div class="field"><label for="f_${k}">${E(label)}</label><select id="f_${k}" name="${k}" ${extra}><option value="">${E(placeholder)}</option>${options(items,selected)}</select></div>`;}
+function adminForm(){
+  return canEdit()&&['student','school','class','route','stop','user'].includes(S.modal?.type);
+}
+function fieldLabel(label,attributes){
+  return E(label)+(adminForm()&&/(?:^|\s)required(?:\s|$)/.test(attributes)?' <span class="required-mark" aria-hidden="true">*</span>':'');
+}
+function formSection(title,fields){
+  return `<fieldset class="form-section wide"><legend>${E(title)}</legend><div class="form-grid">${fields}</div></fieldset>`;
+}
+function field(k,label,value,placeholder='',extra=''){return `<div class="field"><label for="f_${k}">${fieldLabel(label,extra)}</label><input id="f_${k}" name="${k}" value="${E(value||'')}" placeholder="${E(placeholder)}" ${extra}></div>`;}
+function selectField(k,label,items,selected,placeholder='Selecione uma opção',extra=''){return `<div class="field"><label for="f_${k}">${fieldLabel(label,extra)}</label><select id="f_${k}" name="${k}" ${extra}><option value="">${E(placeholder)}</option>${options(items,selected)}</select></div>`;}
 function importSchools() {
   return a('schools').filter(school => ![false, 'false', 'NAO'].includes(school.ativo));
 }
@@ -1174,7 +1206,7 @@ function mergeRoutesDialog(m){
 }
 function routeSchoolFields(selected){
   const schools=a('schools').filter(school=>isActive(school)||selected.includes(school.id));
-  return `<fieldset class="assignment-field route-school-field wide"><legend>Escolas atendidas</legend>
+  return `<fieldset class="assignment-field route-school-field wide"><legend>${fieldLabel('Escolas atendidas','required')}</legend>
     <div class="select-list">${schools.map(school=>`<label class="check-row"><input type="checkbox" name="escolaIds" value="${E(school.id)}" ${selected.includes(school.id)?'checked':''}><span>${E(school.nome)}</span></label>`).join('')||'<p class="assignment-empty">Cadastre uma escola ativa para vincular.</p>'}</div>
   </fieldset>`;
 }
@@ -1282,29 +1314,31 @@ title='Novo ano letivo';sub='Os estudantes antigos permanecem no histórico. Cad
         const previous = edit ? find('students', m.id) : null;
         const monitor = role()==='monitor';
         const shifts = item.turnos ?? [];
+        const shiftRequired=!edit||previous?.turnos?.length;
         const shiftField = `<fieldset class="assignment-field">
-          <legend>Turno</legend>
+          <legend>${fieldLabel('Turno',shiftRequired?'required':'')}${adminForm()&&shiftRequired?'<span class="sr-only">. Selecione pelo menos um turno.</span>':''}</legend>
           ${STUDENT_SHIFTS.map(([value,label])=>`<label class="check-row"><input type="checkbox" name="turnos" value="${value}" ${shifts.includes(value)?'checked':''}> ${label}</label>`).join('')}
         </fieldset>`;
         const guardianRequired = !edit || previous?.responsavel;
-        body = (role() !== 'escola' ? selectField('escolaId', 'Escola', schools, schoolId, 'Selecione uma escola', 'required data-cascade="yes"') : '')
+        const identification = (role() !== 'escola' ? selectField('escolaId', 'Escola', schools, schoolId, 'Selecione uma escola', 'required data-cascade="yes"') : '')
           + field('nome', 'Nome completo do estudante', item.nome, 'Nome e sobrenome', 'required')
-          + shiftField
-          + selectField('rotaId', 'Rota', routes, item.rotaId, 'A definir', 'data-cascade="yes"'+(monitor?' required':''))
+          + shiftField;
+        const transport = selectField('rotaId', 'Rota', routes, item.rotaId, 'A definir', 'data-cascade="yes"'+(monitor?' required':''))
           + field('logradouro', 'Logradouro', item.logradouro, 'Rua, avenida ou localidade', 'maxlength="200"')
-          + selectField('pontoId', 'Ponto', points, item.pontoId, 'A definir', monitor&&(!edit||previous?.pontoId||previous?.rotaId!==routeId)?'required':'')
-          + field('nomeMae', 'Nome completo da mãe', item.nomeMae, 'Nome e sobrenome', 'maxlength="140"' + (!edit || previous?.nomeMae ? ' required' : ''))
+          + selectField('pontoId', 'Ponto', points, item.pontoId, 'A definir', monitor&&(!edit||previous?.pontoId||previous?.rotaId!==routeId)?'required':'');
+        const contacts = field('nomeMae', 'Nome completo da mãe', item.nomeMae, 'Nome e sobrenome', 'maxlength="140"' + (!edit || previous?.nomeMae ? ' required' : ''))
           + field('nomePai', 'Nome completo do pai (opcional)', item.nomePai, 'Nome e sobrenome', 'maxlength="140"')
           + field('responsavel', 'Responsável', item.responsavel, 'Nome do responsável', guardianRequired ? 'required' : '')
           + field('celular', 'Celular do responsável', item.celular, '(38) 99999-9999', !edit&&supportsStudentShifts()?'type="tel" required':'type="tel"');
+        body=adminForm()?formSection('Identificação escolar',identification)+formSection('Transporte',transport)+formSection('Família e contato',contacts):identification+transport+contacts;
       }
       if(type==='user')body=field('nome','Nome completo',item.nome,'Nome do usuário','required')
         +field('email','E-mail cadastrado',item.email,'voce@exemplo.com','type="email" maxlength="254" required autocapitalize="none"'+(edit&&item.email?' readonly':''))
-        +`<div class="field"><label for="f_perfil">Perfil de acesso</label><select name="perfil" id="f_perfil" data-cascade="yes" required><option value="secretaria" ${item.perfil==='secretaria'?'selected':''}>Secretaria</option><option value="escola" ${item.perfil==='escola'?'selected':''}>Escola</option><option value="monitor" ${item.perfil==='monitor'?'selected':''}>Monitor</option></select></div>`
+        +`<div class="field"><label for="f_perfil">${fieldLabel('Perfil de acesso','required')}</label><select name="perfil" id="f_perfil" data-cascade="yes" required><option value="secretaria" ${item.perfil==='secretaria'?'selected':''}>Secretaria</option><option value="escola" ${item.perfil==='escola'?'selected':''}>Escola</option><option value="monitor" ${item.perfil==='monitor'?'selected':''}>Monitor</option></select></div>`
         +(item.perfil==='escola'?selectField('escolaId','Escola',schools,item.escolaId,'Selecione uma escola','required'):'')
         +(edit?`<div class="field"><label for="f_ativo">Situação</label><select id="f_ativo" name="ativo"><option value="SIM" ${isActive(item)?'selected':''}>Ativo</option><option value="NAO" ${!isActive(item)?'selected':''}>Inativo</option></select></div>`:'')
         +`<div class="tip">Use o e-mail de uma conta já criada no Authentication do Supabase. Aqui você define o perfil e as permissões. A senha é a mesma dessa conta.</div>`;
-      body=`<form id="modalForm" data-form="${E(type)}"><div class="form-grid">${body}</div>${modalActions(false,submit)}</form>`;
+      body=`<form id="modalForm" data-form="${E(type)}"${adminForm()?' class="admin-form"':''}>${adminForm()?'<p class="form-requirements">Campos com * são obrigatórios.</p>':''}<div class="form-grid">${body}</div>${modalActions(false,submit)}</form>`;
     }
   }
   return `<div class="modal-mask" data-act="overlay"><div class="modal ${m.type==='studentImport'?'import-modal':['scanner','absence','routeDay','assign','monitorSetup'].includes(m.type)?'transport-modal':''}" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="modal-head"><div><h2 id="modalTitle" tabindex="-1">${E(title)}</h2><p>${E(sub)}</p></div>${m.mandatory?'':`<button class="icon-btn" data-act="closeModal" type="button" aria-label="Fechar">${icon('close')}</button>`}</div>${body}</div></div>`;
