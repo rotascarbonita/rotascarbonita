@@ -1285,6 +1285,11 @@ html:has(.modal-mask) { overflow: hidden; }
   margin-inline: auto;
   padding: 28px var(--gutter);
 }
+@media screen and (max-width: 870px) {
+  #app:has(#rotasStartup, .snapshot-startup) {
+    min-block-size: 100svh;
+  }
+}
 .snapshot-slot { min-block-size: 18rem; }
 .skeleton { pointer-events: none; }
 .skeleton-waiting { visibility: hidden; }
