@@ -129,8 +129,26 @@ async function createBackend(url, publicKey) {
     }
     return rpc(action, data);
   }
+  async function mapApi(action, payload, signal) {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    if (signal.aborted) abort();
+    else signal.addEventListener('abort', abort, { once: true });
+    const timer = setTimeout(abort, 15000);
+    try {
+      const { data, error } = await client.rpc('rotas_map', { action, payload }).abortSignal(controller.signal);
+      if (error) {
+        if (error.code === 'PGRST202') throw Error('O armazenamento de percursos ainda não está disponível.');
+        throw Error(errorMessage(error));
+      }
+      return data;
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', abort);
+    }
+  }
   await watch();
-  return { api, hasSession: () => Boolean(session) };
+  return { api, mapApi, hasSession: () => Boolean(session) };
 }
 
 
@@ -201,10 +219,10 @@ function startRotasInterface() {
 (function(){'use strict';
 const STORE={get:k=>{try{return sessionStorage.getItem(k)||''}catch(e){return ''}},set:(k,v)=>{try{sessionStorage.setItem(k,v)}catch(e){}},remove:k=>{try{sessionStorage.removeItem(k)}catch(e){}}};
 const S={token:window.rotasBackend.hasSession()?'authenticated':'',data:null,view:'',year:'',day:todayLocal(),sentido:'IDA',route:'',callSchool:'',callStop:'',filters:{search:'',school:'',route:'',stop:''},modal:null,busy:false,loading:false,loadingVisible:false,loadError:'',menu:false,checking:false};
-const LABEL={profile:'Perfil',dashboard:'Visão geral',students:'Estudantes',schools:'Escolas',classes:'Turmas',routes:'Rotas',stops:'Pontos',attendance:'Chamada',users:'Acessos',reports:'Relatórios'};
+const LABEL={profile:'Perfil',dashboard:'Visão geral',students:'Estudantes',schools:'Escolas',classes:'Turmas',routes:'Rotas',stops:'Pontos',routeMap:'Mapa de Rotas',attendance:'Chamada',users:'Acessos',reports:'Relatórios'};
 const MONITOR_DOCK=[['dashboard','home'],['students','people'],['reports','chart'],['profile','person']];
 const TYPE={student:'Estudante',school:'Escola',class:'Turma',route:'Rota',stop:'Ponto',user:'Usuário'};
-const NAV=[['dashboard','home'],['students','people'],['schools','school'],['routes','route'],['stops','pin'],['attendance','checklist'],['reports','chart'],['users','lock']];
+const NAV=[['dashboard','home'],['students','people'],['schools','school'],['routes','route'],['stops','pin'],['routeMap','pin'],['attendance','checklist'],['reports','chart'],['users','lock']];
 const $=id=>document.getElementById(id);
 const E=x=>String(x===undefined||x===null?'':x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const a=(k)=>S.data?(S.data[k]||[]):[];
@@ -311,7 +329,63 @@ function canManageStudent(student){
     : a('routes').some(isActive));
 }
 function canEditRoute(route){return Boolean(route&&(role()==='secretaria'||(role()==='escola'&&!route.compartilhada)));}
-function canSee(name){if(name==='profile')return role()==='monitor';if(name==='users'||name==='schools')return role()==='secretaria';if(role()==='monitor')return ['dashboard','students','attendance','reports'].includes(name);return true;}
+function canSee(name){if(name==='profile')return role()==='monitor';if(name==='routeMap')return ['secretaria','escola','monitor'].includes(role());if(name==='users'||name==='schools')return role()==='secretaria';if(role()==='monitor')return ['dashboard','students','attendance','reports'].includes(name);return true;}
+let routeMapRoot, routeMapInstance, routeMapWorkspace, routeMapContext;
+function disposeRouteMap(){
+  routeMapInstance?.destroy();
+  routeMapInstance=undefined;
+  routeMapRoot=undefined;
+}
+function routeMapData(){
+  const schools=a('schools').filter(isActive).filter(school=>role()!=='escola'||school.id===user()?.escolaId)
+    .map(school=>({id:school.id,name:school.nome}));
+  const schoolIds=new Set(schools.map(school=>school.id));
+  const routes=a('routes').filter(isActive).map(route=>({
+    id:route.id,name:route.nome,schoolIds:routeSchoolIds(route).filter(id=>schoolIds.has(id)),
+  })).filter(route=>role()!=='escola'||route.schoolIds.length);
+  const allowed=new Set(routes.map(route=>route.id));
+  const stops=a('stops').filter(stop=>allowed.has(stop.rotaId)&&isActive(stop))
+    .map(stop=>({id:stop.id,name:stop.nome,routeId:stop.rotaId}));
+  return {role:role(),routes,schools:schools.filter(school=>routes.some(route=>route.schoolIds.includes(school.id))),stops};
+}
+function syncRouteMap(){
+  const context=S.token&&S.data?JSON.stringify([user()?.id,user()?.perfil,user()?.escolaId,S.year]):'';
+  if(routeMapContext!==context){
+    disposeRouteMap();
+    routeMapContext=context;
+    routeMapWorkspace=undefined;
+  }
+  const root=$('routeMap');
+  if(!root||!hasSnapshot()||!canSee('routeMap')){disposeRouteMap();return;}
+  if(root===routeMapRoot){routeMapInstance?.update(routeMapData());return;}
+  disposeRouteMap();
+  routeMapRoot=root;
+  const mount=async()=>{
+    const status=root.querySelector('p');
+    const retry=root.querySelector('button');
+    retry.hidden=true;
+    status.textContent='Carregando mapa…';
+    try{
+      const module=await import(new URL('route-map.mjs?v=4',assetsBase).href);
+      if(routeMapRoot!==root||!root.isConnected)return;
+      routeMapWorkspace??=module.createWorkspace();
+      routeMapInstance=module.mountRouteMap(root,routeMapData(),routeMapWorkspace,{
+        gateway:(action, payload, signal)=>window.rotasBackend.mapApi(action,{...payload,year:S.year},signal),
+        institutionalEndpoint:(window.ROTAS_CONFIG||ROTAS_CONFIG).routeMapOsrmUrl
+      });
+    }catch{
+      if(routeMapRoot!==root||!root.isConnected)return;
+      status.textContent='Não foi possível abrir o mapa.';
+      retry.hidden=false;
+    }
+  };
+  root.querySelector('button').addEventListener('click',mount);
+  void mount();
+}
+function routeMapScreen(){
+  return hero('Mapa de Rotas','Consulte os pontos de embarque e as escolas vinculados às rotas.')+
+    '<div id="routeMap"><p role="status">Carregando mapa…</p><button class="btn" type="button" hidden>Tentar novamente</button></div>';
+}
 let renderedView='', renderedModalType='', renderedMenu=false, closingDialog=false;
 let renderedDisclosureContext='', renderedDisclosureModal=null;
 function disclosureContext(){return JSON.stringify([role(),S.view,S.year,S.day]);}
@@ -354,6 +428,8 @@ document.addEventListener('click',event=>{
 });
 function render(){
   if(closingDialog&&S.token)return;
+  disposeRouteMap();
+  if(!S.token){routeMapWorkspace=undefined;routeMapContext=undefined;}
   const app=$('app');
   const reactDock=$('monitorDockReact');
   const fallbackDock=$('monitorDockFallback');
@@ -446,6 +522,7 @@ function render(){
   }
   updateLoadFeedback();
   observeReportTables();
+  syncRouteMap();
   if (S.modal) {
     app.querySelector('.modal').scrollTop = modalScroll;
     if (openingDialog) $('modalTitle')?.focus({preventScroll:true});
@@ -598,6 +675,7 @@ function paintSnapshot(reveal=false){
   announceStudentResults();
   updateLoadFeedback();
   observeReportTables();
+  syncRouteMap();
   if(!active.isConnected||document.activeElement!==active){
     const nextFocus=focusId&&$(focusId);
     (nextFocus||(active.isConnected?active:main)).focus({preventScroll:true});
@@ -611,7 +689,9 @@ function patchSections(container,source){
   for(const [index,next] of newSections.entries()){
     const previous=oldSections[index];
     let node=next;
-    if(previous?.id==='studentFilters'&&next.id==='studentFilters'){
+    if(previous?.id==='routeMap'&&next.id==='routeMap'){
+      node=previous;
+    }else if(previous?.id==='studentFilters'&&next.id==='studentFilters'){
       syncStudentFilters();
       node=previous;
     }else if(previous?.matches('.cards[data-student-list]')&&next.matches('.cards[data-student-list]')){
@@ -686,6 +766,7 @@ function monitorProfile(){
         <div><strong>${E(user().nome)}</strong><p>Monitor de transporte</p></div>
       </div>
       <div class="monitor-profile-actions">
+        <button class="btn" type="button" data-act="nav" data-view="routeMap">${icon('pin')} Mapa de Rotas</button>
         <button class="btn" type="button" data-act="password">${icon('lock')} Alterar senha</button>
         <button class="btn danger" type="button" data-act="logout">${icon('logout')} Sair</button>
       </div>
@@ -731,7 +812,7 @@ function stats(dashboard=false){
   const stops=stat('Pontos de embarque',a('stops').length,'pin','Pontos cadastrados');
   return `<div class="stats${dashboard?' admin-dashboard-stats':''}">${students}${dashboard?linked+routes+stops:routes+stops+linked}</div>`;
 }
-function content(cardLists){switch(S.view){case 'profile':return monitorProfile();case 'dashboard':return dashboard(cardLists);case 'students':return studentsScreen(cardLists);case 'schools':return listScreen('school','schools');case 'classes':return listScreen('class','classes');case 'routes':return listScreen('route','routes');case 'stops':return listScreen('stop','stops');case 'users':return usersScreen();case 'attendance':return attendanceScreen();case 'reports':return reportsScreen();default:return dashboard(cardLists);}}
+function content(cardLists){switch(S.view){case 'routeMap':return routeMapScreen();case 'profile':return monitorProfile();case 'dashboard':return dashboard(cardLists);case 'students':return studentsScreen(cardLists);case 'schools':return listScreen('school','schools');case 'classes':return listScreen('class','classes');case 'routes':return listScreen('route','routes');case 'stops':return listScreen('stop','stops');case 'users':return usersScreen();case 'attendance':return attendanceScreen();case 'reports':return reportsScreen();default:return dashboard(cardLists);}}
 function studentFilterOptions(){
   const f=S.filters,routes=a('routes').filter(r=>!f.school||routeSchoolIds(r).includes(f.school));
   const routeIds=new Set(routes.map(r=>r.id));
