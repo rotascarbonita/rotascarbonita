@@ -366,7 +366,7 @@ function syncRouteMap(){
     retry.hidden=true;
     status.textContent='Carregando mapa…';
     try{
-      const module=await import(new URL('route-map.mjs?v=4',assetsBase).href);
+      const module=await import(new URL('route-map.mjs?v=5',assetsBase).href);
       if(routeMapRoot!==root||!root.isConnected)return;
       routeMapWorkspace??=module.createWorkspace();
       routeMapInstance=module.mountRouteMap(root,routeMapData(),routeMapWorkspace,{

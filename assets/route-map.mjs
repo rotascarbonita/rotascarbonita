@@ -4,6 +4,29 @@ const colors = ['#1351b4', '#8c3d0b', '#006b60', '#773c93', '#ad154c', '#355617'
 const distance = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 });
 const updateTime = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo' });
 const km = meters => distance.format(meters / 1000) + ' km';
+const minutes = seconds => Math.ceil(seconds / 60) + ' min';
+const urbanZoom = 15;
+const mapIcons = {
+  fit: '<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/><circle cx="12" cy="12" r="3"/>',
+  fullscreen: '<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/>',
+  exit: '<path d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5"/>',
+  location: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/>',
+  school: '<path d="m3 10 9-6 9 6v10H3z"/><path d="M10 20v-6h4v6M7 12h1m8 0h1"/>',
+  chevron: '<path d="m6 9 6 6 6-6"/>',
+};
+const mapIcon = name => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${mapIcons[name]}</svg>`;
+const pointKinds = { stop: 'Embarque', school: 'Escola', via: 'Passagem' };
+
+function pointNumbers(list) {
+  let number = 0;
+  return list.map(point => point.kind === 'stop' ? ++number : '');
+}
+
+function pin(point, number) {
+  return `<span class="rm-pin rm-pin-${point.kind}" aria-hidden="true">${point.kind === 'stop'
+    ? `<svg viewBox="0 0 32 42" aria-hidden="true" focusable="false"><path d="M16 40C12 34 2 25 2 16a14 14 0 0 1 28 0c0 9-10 18-14 24Z" fill="currentColor" stroke="white" stroke-width="2"/><text x="16" y="20" text-anchor="middle" fill="white">${number}</text></svg>`
+    : point.kind === 'school' ? mapIcon('school') : ''}</span>`;
+}
 const h = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
 const waypointKey = ({ kind, id }) => JSON.stringify([kind, id]);
 const stateLabels = { draft: 'Rascunho', calculated: 'Calculado', validated: 'Validado' };
@@ -33,7 +56,7 @@ function asset(path, type) {
 async function leaflet() {
   library ??= Promise.allSettled([
     asset('./leaflet/leaflet.css', 'link'),
-    asset('./route-map.css?v=3', 'link'),
+    asset('./route-map.css?v=4', 'link'),
     asset('./leaflet/leaflet.js', 'script'),
   ]).then(results => {
     if (results.some(item => item.status === 'rejected') || !window.L) {
@@ -64,6 +87,8 @@ export function mountRouteMap(root, initialData, workspace, {
   provider = institutionalRouter(institutionalEndpoint),
 } = {}) {
   const events = new AbortController();
+  const markers = new Map();
+  let locationDot;
   let data = initialData, map, layers, resize, request, disposed = false;
   let routeId = '', schoolId = '', direction = 'out', selected = 0, placing = false;
   let persistenceRequest, drag, expandedMap = false;
@@ -72,8 +97,6 @@ export function mountRouteMap(root, initialData, workspace, {
   const undo = new Map();
   const canEdit = () => data.role === 'secretaria';
   const isEditable = () => canEdit() && (!gateway || (Boolean(entry()) && !persistenceRequest));
-  const motion = matchMedia('(prefers-reduced-motion: reduce)');
-  const narrow = matchMedia('(max-width: 870px)');
   const routes = () => data.routes.filter(route => !schoolId || route.schoolIds.includes(schoolId));
   const route = () => routes().find(item => item.id === routeId);
   const key = (id = routeId, way = direction) => JSON.stringify([id, way, scope()]);
@@ -243,7 +266,7 @@ export function mountRouteMap(root, initialData, workspace, {
   function fit() {
     if (!map) return;
     const list = plan().filter(point => point.position);
-    if (!list.length && !imported) map.setView(center, 14, { animate: false });
+    if (!list.length && !imported) map.setView(center, urbanZoom, { animate: false });
     else {
       const road = computed(plan());
       const bounds = window.L.latLngBounds(list.map(point => point.position));
@@ -255,14 +278,44 @@ export function mountRouteMap(root, initialData, workspace, {
 
   function focusMarker(index) {
     const point = plan()[index];
-    if (point?.position && map) map.panTo(point.position, { animate: !motion.matches });
+    if (point?.position && map) {
+      map.panTo(point.position, { animate: false });
+      markers.get(index)?.openPopup();
+    }
   }
 
-  function draw() {
+  function showLocation() {
+    const button = get('[data-rm="my-position"]');
+    const status = get('.rm-map-feedback');
+    if (!map || !navigator.geolocation) {
+      status.textContent = 'Localização atual indisponível.';
+      return;
+    }
+    button.disabled = true;
+    status.textContent = 'Buscando localização…';
+    navigator.geolocation.getCurrentPosition(({ coords }) => {
+      if (disposed) return;
+      const position = coordinates(coords.latitude, coords.longitude);
+      button.disabled = false;
+      if (!position) { status.textContent = 'Localização atual indisponível.'; return; }
+      locationDot?.remove();
+      locationDot = window.L.circleMarker(position, { radius: 8, color: '#fff', weight: 3,
+        fillColor: '#1351b4', fillOpacity: 1, interactive: false }).addTo(map);
+      map.setView(position, Math.max(map.getZoom(), urbanZoom), { animate: false });
+      status.textContent = 'Localização atual exibida no mapa.';
+    }, () => {
+      if (disposed) return;
+      button.disabled = false;
+      status.textContent = 'Permita a localização no navegador ou navegue pelo mapa.';
+    }, { timeout: 10000 });
+  }
+
+  function draw(list = plan(), result = computed(list), numbers = pointNumbers(list),
+    distances = result ? legDistances(result.legs, list) : []) {
     if (!map) return;
     const L = window.L;
     layers.clearLayers();
-    const list = plan(), result = computed(list);
+    markers.clear();
     const color = colors[data.routes.findIndex(item => item.id === routeId) % colors.length] || colors[0];
     if (imported?.reference && result?.provider?.startsWith('arquivo-')) {
       L.geoJSON(imported.reference.geometry, { style: { color, weight: 5, opacity: .72 }, interactive: false }).addTo(layers);
@@ -276,18 +329,22 @@ export function mountRouteMap(root, initialData, workspace, {
       { style: { color: '#7d286f', weight: 4, dashArray: '8 6' }, smoothFactor: 1.5, interactive: false }).addTo(layers);
     for (const [index, point] of list.entries()) {
       if (!point.position) continue;
-      const sign = document.createElement('span');
-      sign.className = 'rm-pin rm-pin-' + point.kind;
-      sign.style.setProperty('--pin-color', color);
-      sign.textContent = point.kind === 'school' ? 'E' : point.kind === 'via' ? '·' : String(index + 1);
       const popup = document.createElement('div');
-      const title = document.createElement('strong');
-      title.textContent = point.name;
-      popup.append(title, document.createElement('br'), point.position.map(value => value.toFixed(6)).join(', '));
+      popup.className = 'rm-popup';
+      const roadLeg = result?.legs[index];
+      const rows = distances[index]?.remaining.slice(point.kind === 'school' ? 1 : 0) || [];
+      popup.innerHTML = `<small>${pointKinds[point.kind]}${numbers[index] ? ' ' + numbers[index] : ''}</small>
+        <strong>${h(point.name)}</strong>
+        ${rows.map(school => `<div>Até ${h(school.name)} <b>${km(school.distance)}</b></div>`).join('')}
+        ${roadLeg ? `<div>Até o próximo ponto <b>${km(roadLeg.distance)}</b></div>
+          ${Number.isFinite(roadLeg.duration) ? `<div>Tempo estimado do trecho <b>${minutes(roadLeg.duration)}</b></div>` : ''}`
+          : !result ? '<div>Distâncias e tempo ainda indisponíveis.</div>' : ''}`;
       const marker = L.marker(point.position, {
-        icon: L.divIcon({ html: sign, className: 'rm-marker', iconSize: [34, 34], iconAnchor: [17, 17] }),
+        icon: L.divIcon({ html: pin(point, numbers[index]), className: 'rm-marker', iconSize: [44, 44],
+          iconAnchor: point.kind === 'stop' ? [22, 42] : [22, 22], popupAnchor: point.kind === 'stop' ? [0, -39] : [0, -13] }),
         title: point.name, alt: point.name, draggable: isEditable(),
       }).addTo(layers).bindPopup(popup);
+      markers.set(index, marker);
       marker.getElement()?.setAttribute('aria-label', point.name);
       marker.on('click', () => { selected = index; render(false); });
       marker.on('dragend', () => {
@@ -316,13 +373,22 @@ export function mountRouteMap(root, initialData, workspace, {
     selected = Math.min(selected, Math.max(0, list.length - 1));
     const point = list[selected];
     const result = computed(list);
+    const numbers = pointNumbers(list);
+    const distances = result ? legDistances(result.legs, list) : [];
     const state = entry();
     const other = gateway ? null : computed(plan(routeId, direction === 'out' ? 'back' : 'out'));
-    get('.rm-legend').innerHTML = available.map(item =>
-      `<span><i style="--pin-color:${colors[data.routes.indexOf(item) % colors.length]}"></i>${h(item.name)}</span>`).join('') +
-      '<span><b>E</b> Escola</span><span><b>·</b> Passagem</span>' +
-      (imported || result?.provider?.startsWith('arquivo-') ? '<span><i class="rm-file-swatch"></i> Traçado do arquivo</span>' : '') +
-      (imported?.reference ? '<span>Linha contínua · sugestão OSRM</span>' : '');
+    const visibleKinds = new Set(list.filter(item => item.position).map(item => item.kind));
+    const routeColor = colors[data.routes.indexOf(route()) % colors.length];
+    const fileLine = result?.provider?.startsWith('arquivo-');
+    const legend = get('.rm-legend');
+    legend.innerHTML =
+      (route() && (visibleKinds.size || result || imported) ? `<strong>${h(route().name)}</strong>` : '') +
+      Object.entries(pointKinds).filter(([kind]) => visibleKinds.has(kind))
+        .map(([kind, name]) => `<span>${pin({ kind }, '')}${name}</span>`).join('') +
+      (result && !fileLine || fileLine && imported?.reference
+        ? `<span><i style="--pin-color:${routeColor}"></i>Percurso calculado</span>` : '') +
+      (imported || fileLine ? '<span><i class="rm-file-swatch"></i> Traçado do arquivo</span>' : '');
+    legend.hidden = !legend.firstChild;
     const importedItem = point && imported?.matches.get(waypointKey(point));
     get('.rm-import').hidden = !isEditable() || !route();
     get('.rm-track-actions').hidden = !imported;
@@ -341,9 +407,11 @@ export function mountRouteMap(root, initialData, workspace, {
       : '';
     const editor = get('.rm-editor');
     editor.hidden = !canEdit() || !route();
+    get('[data-rm="pick"]').hidden = editor.hidden;
     get('.rm-point-rows').innerHTML = list.map((item,i) =>
-      `<li data-rm-row="${i}"><button type="button" data-rm-index="${i}" aria-pressed="${i === selected}"><span>${i+1}</span>
-      <span>${h(item.name)}<small>${item.kind === 'school' ? 'Escola' : item.kind === 'via' ? 'Passagem' : 'Embarque'} · ${item.position ? 'Localizado' : 'Sem localização'}</small></span></button>
+      `<li data-rm-row="${i}"><button type="button" data-rm-index="${i}" aria-pressed="${i === selected}">${pin(item, numbers[i])}
+      <span><strong>${h(item.name)}</strong><small>${pointKinds[item.kind]}${numbers[i] ? ' ' + numbers[i] : ''}
+      ${item.position ? '' : ' · <b class="rm-missing">Sem localização</b>'}</small></span></button>
       ${isEditable() ? '<span class="rm-handle" data-rm-handle aria-hidden="true" title="Arraste para reordenar">⠿</span>' : ''}</li>`).join('');
     if (canEdit()) {
       editor.querySelector('fieldset').disabled = !point || !isEditable();
@@ -365,6 +433,7 @@ export function mountRouteMap(root, initialData, workspace, {
         .map(stop => `<option value="${h(stop.id)}">${h(stop.name)}</option>`).join('');
       addStop.disabled = !isEditable() || list.length >= 40 || addStop.options.length < 2;
       get('[data-rm="pick"]').setAttribute('aria-pressed', String(placing));
+      get('[data-rm="pick"]').disabled = !point || !isEditable();
       get('.rm-canvas').classList.toggle('rm-picking', placing || linkingTrack);
     }
     get('[data-rm="calculate"]').disabled = !provider || !route() || Boolean(request) || !isEditable();
@@ -396,16 +465,18 @@ export function mountRouteMap(root, initialData, workspace, {
       metrics[direction].provider = result?.provider;
       const known = [out, back].every(value => value && (value.journeys === 0 || Number.isFinite(value.distance)));
       const daily = known ? km([out, back].reduce((sum, value) => sum + (value.distance || 0) * value.journeys, 0)) : '—';
-      get('.rm-summary').innerHTML = `<span>Ida ${item(out)} · Volta ${item(back)}</span><br>
-        <strong>Total diário ${daily}</strong><br>
-        <span>Tempo estimado ${Number.isFinite(result?.duration) ? Math.ceil(result.duration / 60) + ' min' : '—'}</span><br>
-        <span>Tempo registrado ${state?.observedSeconds ? state.observedSeconds + ' s' : '—'}</span>`;
+      get('.rm-summary').innerHTML = `<dl><div><dt>Ida</dt><dd>${item(out)}</dd></div>
+        <div><dt>Volta</dt><dd>${item(back)}</dd></div>
+        <div><dt>Total diário</dt><dd>${daily}</dd></div>
+        <div><dt>Tempo estimado</dt><dd>${Number.isFinite(result?.duration) ? minutes(result.duration) : '—'}</dd></div>
+        <div><dt>Tempo registrado</dt><dd>${state?.observedSeconds ? state.observedSeconds + ' s' : '—'}</dd></div></dl>`;
     }
     get('.rm-breakdown').hidden = !result;
-    get('.rm-results').innerHTML = result ? legDistances(result.legs, list).map(row =>
+    get('.rm-results').innerHTML = result ? distances.map(row =>
       `<li><strong>${h(row.point.name)}</strong><span>Trecho ${km(row.leg)} · Acumulado ${km(row.accumulated)}</span>
         ${row.remaining.map(school => `<span>Até ${h(school.name)} · ${km(school.distance)}</span>`).join('')}</li>`).join('') : '';
-    if (redraw) draw();
+    if (redraw) draw(list, result, numbers, distances);
+    for (const [index, marker] of markers) marker.getElement()?.classList.toggle('rm-marker-selected', index === selected);
   }
 
   async function calculate() {
@@ -543,6 +614,7 @@ export function mountRouteMap(root, initialData, workspace, {
       if (!workspace.pending.has(key()) || confirm('Descartar alterações locais e ler a versão salva?')) void readPlan(true);
     },
     fullscreen: toggleFullscreen,
+    'my-position': showLocation,
     'import-link'() {
       if (!imported) return;
       linkingTrack = !linkingTrack;
@@ -606,7 +678,10 @@ export function mountRouteMap(root, initialData, workspace, {
     get('.rm-map-area').classList.toggle('rm-expanded', expanded);
     const button = get('[data-rm="fullscreen"]');
     button.setAttribute('aria-pressed', String(expanded));
-    button.textContent = expanded ? 'Sair da tela cheia' : 'Tela cheia';
+    const label = expanded ? 'Sair da tela cheia' : 'Tela cheia';
+    button.title = label;
+    button.setAttribute('aria-label', label);
+    button.innerHTML = mapIcon(expanded ? 'exit' : 'fullscreen');
     get('.rm-side').inert = expanded;
     map?.invalidateSize({ pan: false });
   }
@@ -642,7 +717,7 @@ export function mountRouteMap(root, initialData, workspace, {
       map = L.map(get('.rm-canvas'), {
         scrollWheelZoom: false, zoomControl: false, zoomAnimation: false,
         fadeAnimation: false, markerZoomAnimation: false, attributionControl: false,
-      }).setView(center, 14);
+      }).setView(center, urbanZoom);
       L.control.zoom({ position: 'topright', zoomInTitle: 'Aproximar', zoomOutTitle: 'Afastar' }).addTo(map);
       L.control.attribution({ prefix: false }).addTo(map);
       L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(map);
@@ -672,23 +747,25 @@ export function mountRouteMap(root, initialData, workspace, {
       <section class="rm-map-area" aria-label="Mapa de Carbonita">
         <div class="rm-canvas" tabindex="0" role="region" aria-label="Mapa interativo. Use as setas para mover e mais ou menos para ajustar o zoom."></div>
         <div class="rm-map-buttons">
-          <button type="button" class="btn" data-rm="fit">Enquadrar percurso</button>
-          <button type="button" class="btn" data-rm="fullscreen" aria-pressed="false">Tela cheia</button>
+          <button type="button" data-rm="fit" aria-label="Enquadrar percurso" title="Enquadrar percurso">${mapIcon('fit')}</button>
+          <button type="button" data-rm="fullscreen" aria-pressed="false" aria-label="Tela cheia" title="Tela cheia">${mapIcon('fullscreen')}</button>
+          <button type="button" data-rm="my-position" aria-label="Minha localização no mapa" title="Minha localização no mapa">${mapIcon('location')}</button>
         </div>
         <div class="rm-legend" aria-label="Legenda"></div>
         <p class="rm-tile-status" role="status"></p>
+        <p class="rm-map-feedback" role="status"></p>
       </section>
       <aside class="rm-side" aria-label="Rotas e pontos">
-        <button type="button" class="rm-disclosure btn" aria-expanded="true" aria-controls="rm-controls">Rotas e pontos <span aria-hidden="true">⌃</span></button>
+        <button type="button" class="rm-disclosure" aria-expanded="true" aria-controls="rm-controls" aria-label="Rotas e pontos"><span>Rotas e pontos</span>${mapIcon('chevron')}</button>
         <div id="rm-controls" class="rm-fold"><div class="rm-inner"><div class="rm-controls">
-          <div class="rm-filters rm-route-filters">
+          <div class="rm-selection"><div class="rm-filters">
             <label>Escola<select data-rm-school></select></label>
             <label>Rota<select data-rm-route></select></label>
           </div>
           <div class="rm-directions" role="group" aria-label="Sentido">
             <button type="button" class="btn" data-rm-direction="out">Ida</button>
             <button type="button" class="btn" data-rm-direction="back">Volta</button>
-          </div>
+          </div></div>
           <p class="rm-state" role="status"></p>
           <small class="rm-revision"></small>
           <button type="button" class="btn" data-rm="load" ${gateway ? '' : 'hidden'}>Reler percurso salvo</button>
@@ -696,11 +773,38 @@ export function mountRouteMap(root, initialData, workspace, {
           <button type="button" class="btn" data-rm="retry" hidden>Tentar carregar mapa</button>
           <small class="rm-provider"></small>
           <p class="rm-status" role="status"></p>
-          <p class="rm-summary"></p>
+          <div class="rm-summary" aria-label="Métricas do percurso"></div>
           <details class="rm-breakdown" hidden><summary>Distâncias por trecho</summary>
             <ol class="rm-results" aria-label="Distâncias do percurso"></ol>
           </details>
+          <div class="rm-list-heading"><h2>Pontos do percurso</h2><button type="button" class="btn small" data-rm="pick" hidden>Marcar no mapa</button></div>
           <ol class="rm-point-rows" aria-label="Sequência do percurso"></ol>
+          <form class="rm-editor">
+            <fieldset><legend>Editar item selecionado</legend>
+              <div class="rm-actions">
+                <button type="button" class="btn small" data-rm="up">Subir</button>
+                <button type="button" class="btn small" data-rm="down">Descer</button>
+                <button type="button" class="btn small" data-rm="remove" hidden>Retirar da sequência</button>
+              </div>
+              <div class="rm-filters">
+                <label>Latitude<input name="lat" inputmode="decimal" required></label>
+                <label>Longitude<input name="lng" inputmode="decimal" required></label>
+              </div>
+              <label ${gateway ? '' : 'hidden'}><input type="checkbox" name="setReference"> Atualizar também a coordenada de referência do cadastro</label>
+              <div class="rm-actions">
+                <button type="submit" class="btn small">Aplicar coordenadas</button>
+                <button type="button" class="btn small" data-rm="locate">Usar minha localização</button>
+              </div>
+            </fieldset>
+            <div class="rm-filters rm-route-filters" ${gateway ? '' : 'hidden'}>
+              <label>Ponto existente<select name="addStop"></select></label>
+              <label>Escola de destino<select name="addSchool"></select></label>
+            </div>
+            <div class="rm-actions">
+              <button type="button" class="btn small" data-rm="add">Adicionar passagem</button>
+              <button type="button" class="btn small" data-rm="undo">Desfazer</button>
+            </div>
+          </form>
           <section class="rm-import" aria-label="Importar trajeto">
             <label>Importar GPX, KML ou GeoJSON <input type="file" name="trackFile" accept=".gpx,.kml,.geojson,.json"></label>
             <div class="rm-track-actions" hidden>
@@ -717,33 +821,6 @@ export function mountRouteMap(root, initialData, workspace, {
               </div>
             </div>
           </section>
-          <form class="rm-editor">
-            <fieldset><legend>Editar item selecionado</legend>
-              <div class="rm-actions">
-                <button type="button" class="btn small" data-rm="up">Subir</button>
-                <button type="button" class="btn small" data-rm="down">Descer</button>
-                <button type="button" class="btn small" data-rm="remove" hidden>Retirar da sequência</button>
-              </div>
-              <div class="rm-filters">
-                <label>Latitude<input name="lat" inputmode="decimal" required></label>
-                <label>Longitude<input name="lng" inputmode="decimal" required></label>
-              </div>
-              <label ${gateway ? '' : 'hidden'}><input type="checkbox" name="setReference"> Atualizar também a coordenada de referência do cadastro</label>
-              <div class="rm-actions">
-                <button type="submit" class="btn small">Aplicar coordenadas</button>
-                <button type="button" class="btn small" data-rm="pick">Marcar no mapa</button>
-                <button type="button" class="btn small" data-rm="locate">Usar minha localização</button>
-              </div>
-            </fieldset>
-            <div class="rm-filters rm-route-filters" ${gateway ? '' : 'hidden'}>
-              <label>Ponto existente<select name="addStop"></select></label>
-              <label>Escola de destino<select name="addSchool"></select></label>
-            </div>
-            <div class="rm-actions">
-              <button type="button" class="btn small" data-rm="add">Adicionar passagem</button>
-              <button type="button" class="btn small" data-rm="undo">Desfazer</button>
-            </div>
-          </form>
           <div class="rm-persistence">
             <fieldset><legend>Programação e salvamento</legend>
               <div class="rm-filters">
@@ -782,10 +859,10 @@ export function mountRouteMap(root, initialData, workspace, {
   }, { signal: events.signal });
   function syncDisclosure() {
     const button = get('.rm-disclosure'), panel = get('.rm-inner');
-    panel.inert = narrow.matches && button.getAttribute('aria-expanded') === 'false';
-    if (panel.inert && panel.contains(document.activeElement)) button.focus();
+    const collapsed = button.getAttribute('aria-expanded') === 'false';
+    if (collapsed && panel.contains(document.activeElement)) button.focus();
+    panel.inert = collapsed;
   }
-  narrow.addEventListener('change', syncDisclosure, { signal: events.signal });
   register('click', event => {
     const button = event.target.closest('button');
     if (!button) return;
@@ -803,7 +880,7 @@ export function mountRouteMap(root, initialData, workspace, {
       focusMarker(selected);
     } else if (button.dataset.rm === 'retry') {
       openMap();
-    } else if (isEditable() || ['fit', 'fullscreen', 'load'].includes(button.dataset.rm)) {
+    } else if (isEditable() || ['fit', 'fullscreen', 'load', 'my-position'].includes(button.dataset.rm)) {
       actions[button.dataset.rm]?.();
     }
   });
