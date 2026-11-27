@@ -41,6 +41,44 @@
 .rm-credits :is(.leaflet-control-attribution, .leaflet-control-scale) { margin: 0; float: none; font: 11px/1.3 system-ui; }
 .rm-credits .leaflet-control-scale-line { box-sizing: border-box; }
 .rm-controls { padding: 16px; display: grid; gap: 12px; }
+.rm-point-list, .rm-persistence, .rm-advanced-body { display: grid; gap: 8px; }
+.rm-point-list { min-width: 0; }
+.rm-technical { display: grid; gap: 4px; }
+.rm-primary-actions:not(:has(button:not([hidden]))) { display: none; }
+.rm-advanced { padding: 10px; border: 1px solid var(--line); border-radius: 10px; }
+.rm-advanced > summary { cursor: pointer; font-weight: 700; padding-block: 5px; }
+.rm-advanced-body { margin-top: 8px; }
+.rm-consultation .rm-selection .rm-filters { grid-template-columns: minmax(0, 1fr); }
+.rm-consultation .rm-selection .rm-filters:not(:has(label:not([hidden]))) { display: none; }
+.rm-consultation .rm-refresh { justify-self: start; min-width: 44px; border-color: transparent; }
+.rm-refresh svg { width: 18px; height: 18px; }
+.rm-consultation-summary:empty { display: none; }
+.rm-consultation-summary dl {
+  display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 0; padding: 12px;
+  border: 1px solid var(--line); border-radius: 10px;
+}
+.rm-consultation-summary dt { font-size: .8rem; }
+.rm-consultation-summary dd { margin: 3px 0 0; font-weight: 700; }
+.rm-operational .rm-selection { border: 0; padding: 0; }
+.rm-operational .rm-directions {
+  gap: 2px; padding: 3px; border-radius: 12px; background: var(--tint, #e9eff6);
+}
+.rm-operational .rm-directions .btn { border: 0; border-radius: 9px; }
+.rm-operational .rm-consultation-summary dl {
+  border-width: 1px 0; border-radius: 0; padding: 8px 0;
+}
+.rm-operational .rm-point-rows { gap: 0; }
+.rm-operational .rm-point-rows li { position: relative; }
+.rm-operational .rm-point-rows li::before {
+  content: ''; position: absolute; inset: 0 auto 0 19px; width: 2px;
+  background: var(--line, #ced8e5); pointer-events: none;
+}
+.rm-operational .rm-point-rows li:nth-child(1 of :not([hidden]))::before { top: 50%; }
+.rm-operational .rm-point-rows li:nth-last-child(1 of :not([hidden]))::before { bottom: 50%; }
+.rm-operational .rm-point-rows button { border-color: transparent; }
+.rm-operational .rm-point-rows button[aria-pressed="true"] { background: var(--tint, #e9eff6); }
+.rm-operational .rm-point-rows .rm-pin { z-index: 1; }
+.rm-side { overscroll-behavior: contain; }
 .rm-selection { display: grid; gap: 10px; padding: 12px; border-radius: 12px; border: 1px solid var(--line, #ced8e5); }
 .rm-selection select { min-height: 44px; padding-inline: 8px; }
 .rm-directions .btn { padding: 6px 12px; }

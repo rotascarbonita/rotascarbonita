@@ -18,6 +18,7 @@ const mapIcons = {
   fullscreen: '<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/>',
   exit: '<path d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5"/>',
   location: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/>',
+  refresh: '<path d="M20 7v5h-5M4 17v-5h5"/><path d="M5 9a7.5 7.5 0 0 1 12-3l3 3M4 15l3 3a7.5 7.5 0 0 0 12-3"/>',
   school: '<path d="m3 10 9-6 9 6v10H3z"/><path d="M10 20v-6h4v6M7 12h1m8 0h1"/>',
   chevron: '<path d="m6 9 6 6 6-6"/>',
 };
@@ -63,7 +64,7 @@ function asset(path, type) {
 async function leaflet() {
   library ??= Promise.allSettled([
     asset('./leaflet/leaflet.css', 'link'),
-    asset('./route-map.css?v=7', 'link'),
+    asset('./route-map.css?v=9', 'link'),
     asset('./leaflet/leaflet.js', 'script'),
   ]).then(results => {
     if (results.some(item => item.status === 'rejected') || !window.L) {
@@ -103,11 +104,18 @@ export function mountRouteMap(root, initialData, workspace, {
   let locationDot;
   let data = initialData, map, layers, resize, request, disposed = false;
   let routeId = '', schoolId = '', direction = 'out', selected = 0, placing = false;
-  let persistenceRequest, drag, expandedMap = false;
+  let persistenceRequest, drag, readFailed = false, expandedMap = false;
   let imported, importing, linkingTrack = false;
   const saved = new Map();
   const undo = new Map();
   const canEdit = () => data.role === 'secretaria';
+  const monitor = data.role === 'monitor';
+  const displayDistance = meters => monitor && meters < 1000 ? distance.format(Math.round(meters)) + ' m' : km(meters);
+  const displayDuration = seconds => monitor
+    ? '≈ ' + (seconds > 0 ? Math.max(1, Math.round(seconds / 60)) : 0) + ' min'
+    : duration(seconds);
+  const directions = monitor ? { out: 'Para Escola', back: 'Para Casa' } : { out: 'Ida', back: 'Volta' };
+  const unconfigured = 'A rota ainda está sendo configurada pela Secretaria.';
   const isEditable = () => canEdit() && (!gateway || (Boolean(entry()) && !persistenceRequest));
   const routes = () => data.routes.filter(route => !schoolId || route.schoolIds.includes(schoolId));
   const route = () => routes().find(item => item.id === routeId);
@@ -129,10 +137,11 @@ export function mountRouteMap(root, initialData, workspace, {
 
   async function readPlan(refresh = false) {
     closePersistence();
+    readFailed = false;
     if (!gateway || !route()) {
       render();
       fit();
-      if (!route()) tell('Nenhuma rota ativa disponível para este perfil e ano letivo.');
+      if (!route()) tell(canEdit() ? 'Nenhuma rota ativa disponível para este perfil e ano letivo.' : unconfigured);
       return;
     }
     const id = key();
@@ -141,11 +150,11 @@ export function mountRouteMap(root, initialData, workspace, {
     const controller = new AbortController();
     persistenceRequest = controller;
     render();
-    tell('Carregando percurso salvo…');
+    tell(canEdit() ? 'Carregando percurso salvo…' : 'Carregando rota…');
     try {
       const result = await gateway('read', selection(), controller.signal);
       if (persistenceRequest !== controller || disposed) return;
-      const stored = result.plan;
+      const stored = canEdit() || result.plan?.status === 'validated' ? result.plan : null;
       const state = {
         plan: stored, revision: stored?.revision || 0, status: stored?.status || 'draft',
         road: stored?.road || null, journeys: stored?.journeys ?? 1,
@@ -160,9 +169,12 @@ export function mountRouteMap(root, initialData, workspace, {
       saved.set(id, state);
       tell(pending && pending.revision !== state.revision
         ? 'Outra sessão salvou uma revisão enquanto este rascunho estava aberto. Foi carregada a versão do servidor.'
-        : stored ? '' : canEdit() ? 'Ainda não há percurso salvo. Selecione um ponto ou escola existente para informar a localização.' : 'Ainda não há percurso validado neste recorte.');
+        : stored ? '' : canEdit() ? 'Ainda não há percurso salvo. Selecione um ponto ou escola existente para informar a localização.' : unconfigured);
     } catch (error) {
-      if (!disposed && persistenceRequest === controller) tell(error.message || 'Percurso indisponível.');
+      if (!disposed && persistenceRequest === controller) {
+        readFailed = true;
+        tell(canEdit() ? error.message || 'Percurso indisponível.' : 'Não foi possível carregar a rota.');
+      }
     } finally {
       if (!disposed && persistenceRequest === controller) {
         persistenceRequest = undefined;
@@ -372,15 +384,15 @@ export function mountRouteMap(root, initialData, workspace, {
     if (imported) L.geoJSON({ type: 'LineString', coordinates: imported.track.line },
       { style: { color: '#7d286f', weight: 4, dashArray: '8 6' }, smoothFactor: 1.5, interactive: false }).addTo(layers);
     for (const [index, point] of list.entries()) {
-      if (!point.position) continue;
+      if (!point.position || (!canEdit() && point.kind === 'via')) continue;
       const popup = document.createElement('div');
       popup.className = 'rm-popup';
       const roadLeg = result?.legs[index];
       const rows = distances[index]?.remaining.slice(point.kind === 'school' ? 1 : 0) || [];
       popup.innerHTML = `<small>${pointKinds[point.kind]}${numbers[index] ? ' ' + numbers[index] : ''}</small>
         <strong>${h(point.name)}</strong>
-        ${rows.map(school => `<div>Até ${h(school.name)} <b>${km(school.distance)}</b></div>`).join('')}
-        ${roadLeg ? `<div>Até o próximo ponto <b>${km(roadLeg.distance)}</b></div>
+        ${rows.map(school => `<div>Até ${h(school.name)} <b>${displayDistance(school.distance)}</b></div>`).join('')}
+        ${canEdit() && roadLeg ? `<div>Até o próximo ponto <b>${km(roadLeg.distance)}</b></div>
           ${Number.isFinite(roadLeg.duration) ? `<div>Tempo estimado do trecho <b>${duration(roadLeg.duration)}</b></div>` : ''}`
           : !result ? '<div>Distâncias e tempo ainda indisponíveis.</div>' : ''}`;
       const marker = L.marker(point.position, {
@@ -415,11 +427,17 @@ export function mountRouteMap(root, initialData, workspace, {
     get('[data-rm-school]').innerHTML = '<option value="">Todas as escolas</option>' +
       data.schools.map(school => `<option value="${h(school.id)}">${h(school.name)}</option>`).join('');
     get('[data-rm-school]').value = schoolId;
+    get('[data-rm-school]').parentElement.hidden = !canEdit();
     get('[data-rm-route]').innerHTML = available.length
       ? available.map(item => `<option value="${h(item.id)}">${h(item.name)}</option>`).join('')
       : '<option value="">Nenhuma rota disponível</option>';
     get('[data-rm-route]').value = routeId;
     get('[data-rm-route]').disabled = !available.length;
+    get('[data-rm-route]').parentElement.hidden = !canEdit() && available.length <= 1;
+    const currentRoute = get('.rm-current-route');
+    currentRoute.hidden = canEdit() || available.length !== 1;
+    currentRoute.textContent = route()?.name || '';
+    get('.rm-selection').hidden = !canEdit() && !available.length;
     for (const button of root.querySelectorAll('[data-rm-direction]')) {
       button.setAttribute('aria-pressed', String(button.dataset.rmDirection === direction));
     }
@@ -442,7 +460,7 @@ export function mountRouteMap(root, initialData, workspace, {
       (result && !fileLine || fileLine && imported?.reference
         ? `<span><i style="--pin-color:${routeColor}"></i>Percurso calculado</span>` : '') +
       (imported || fileLine ? '<span><i class="rm-file-swatch"></i> Traçado do arquivo</span>' : '');
-    legend.hidden = !legend.firstChild;
+    legend.hidden = !canEdit() || !legend.firstChild;
     const importedItem = point && imported?.matches.get(waypointKey(point));
     get('.rm-import').hidden = !isEditable() || !route();
     get('.rm-track-actions').hidden = !imported;
@@ -462,10 +480,16 @@ export function mountRouteMap(root, initialData, workspace, {
     const editor = get('.rm-editor');
     editor.hidden = !canEdit() || !route();
     get('[data-rm="pick"]').hidden = editor.hidden;
+    const showConsultation = canEdit() || Boolean(state?.plan);
+    get('.rm-consultation-summary').hidden = canEdit() || !state?.plan;
+    get('.rm-point-list').hidden = !showConsultation;
     get('.rm-point-rows').innerHTML = list.map((item,i) =>
+      !canEdit() && item.kind !== 'stop' && !(monitor && item.kind === 'school') ? '' :
       `<li data-rm-row="${i}"><button type="button" data-rm-index="${i}" aria-pressed="${i === selected}">${pin(item, numbers[i])}
-      <span><strong>${h(item.name)}</strong><small>${pointKinds[item.kind]}${numbers[i] ? ' ' + numbers[i] : ''}
-      ${item.position ? '' : ' · <b class="rm-missing">Sem localização</b>'}</small></span></button>
+      <span><strong>${h(item.name)}</strong><small>${monitor && item.kind === 'school' ? 'Escola atendida' : pointKinds[item.kind]}${numbers[i] ? ' ' + numbers[i] : ''}
+      ${item.position ? '' : ' · <b class="rm-missing">Sem localização</b>'}</small>
+      ${canEdit() ? '' : (distances[i]?.remaining.slice(item.kind === 'school' ? 1 : 0) || []).map(school =>
+        `<small>Até ${h(school.name)} · ${displayDistance(school.distance)}</small>`).join('')}</span></button>
       ${isEditable() ? '<span class="rm-handle" data-rm-handle aria-hidden="true" title="Arraste para reordenar">⠿</span>' : ''}</li>`).join('');
     filterPoints();
     if (canEdit()) {
@@ -497,13 +521,27 @@ export function mountRouteMap(root, initialData, workspace, {
     get('.rm-provider').textContent = provider?.label || '';
     get('.rm-provider').hidden = !provider;
     get('.rm-routing-help').hidden = !canEdit();
-    get('[data-rm="load"]').disabled = Boolean(persistenceRequest) || !route();
+    const refresh = get('[data-rm="load"]');
+    refresh.disabled = Boolean(persistenceRequest) || !route();
+    refresh.hidden = !gateway || (!canEdit() && !route());
+    if (!canEdit()) {
+      const label = readFailed ? 'Tentar novamente' : monitor ? 'Atualizar mapa' : 'Atualizar rota';
+      refresh.querySelector('span').textContent = label;
+      refresh.setAttribute('aria-label', label);
+      refresh.title = label;
+      refresh.querySelector('span').hidden = !monitor && !readFailed;
+    }
     get('.rm-persistence').hidden = !gateway || !canEdit();
+    get('.rm-advanced').hidden = !canEdit();
+    get('.rm-technical').hidden = !canEdit();
+    get('.rm-preview').hidden = !canEdit();
+    get('.rm-revision').hidden = !canEdit();
     get('[data-rm="undo"]').disabled = !isEditable() || !undo.get(key())?.length;
-    get('.rm-persistence fieldset').disabled = !isEditable();
+    get('.rm-schedule fieldset').disabled = !isEditable();
+    get('[data-rm="persist"]').disabled = !isEditable();
     get('[name="journeys"]').value = state?.journeys ?? 1;
     get('[name="observed"]').value = state?.observedSeconds ?? '';
-    get('[data-rm="validate"]').disabled = !state?.road || !get('[name="verified"]').checked;
+    get('[data-rm="validate"]').disabled = !isEditable() || !state?.road || !get('[name="verified"]').checked;
     const badge = get('.rm-state');
     const status = state?.status || (result ? 'calculated' : 'draft');
     if (badge.dataset.state !== status) {
@@ -520,16 +558,19 @@ export function mountRouteMap(root, initialData, workspace, {
     const schools = list.filter(item => item.kind === 'school');
     get('.rm-preview-count').textContent = `${stops} ${stops === 1 ? 'embarque' : 'embarques'} · ${schools.length} ${schools.length === 1 ? 'escola' : 'escolas'}`;
     const routeName = route()?.name;
-    get('.rm-sheet-route').textContent = routeName ? routeName + ' · ' + (direction === 'out' ? 'Ida' : 'Volta') : 'Nenhuma rota disponível';
+    get('.rm-sheet-route').textContent = routeName ? routeName + ' · ' + directions[direction] : 'Nenhuma rota disponível';
     const sheetCounts = get('.rm-sheet-counts');
-    sheetCounts.textContent = routeName ? get('.rm-preview-count').textContent : '';
+    sheetCounts.textContent = canEdit() && routeName ? get('.rm-preview-count').textContent : '';
     const sheetSchools = get('.rm-sheet-schools');
     sheetSchools.textContent = schools.map(item => item.name).join(' · ');
     sheetSchools.title = sheetSchools.textContent;
     get('.rm-sheet-metrics').textContent = result ? [
-      Number.isFinite(result.distance) && km(result.distance),
-      Number.isFinite(result.duration) && duration(result.duration),
+      Number.isFinite(result.distance) && displayDistance(result.distance),
+      Number.isFinite(result.duration) && displayDuration(result.duration),
     ].filter(Boolean).join(' · ') : '';
+    get('.rm-consultation-summary').innerHTML = result ? `<dl>
+      <div><dt>Distância total</dt><dd>${displayDistance(result.distance)}</dd></div>
+      ${Number.isFinite(result.duration) ? `<div><dt>Tempo estimado</dt><dd>${displayDuration(result.duration)}</dd></div>` : ''}</dl>` : '';
     get('.rm-preview-total').textContent = result ? km(result.distance) : '—';
     const destinations = get('.rm-preview-schools');
     destinations.hidden = !schools.length;
@@ -552,7 +593,7 @@ export function mountRouteMap(root, initialData, workspace, {
         <div><dt>Tempo estimado</dt><dd>${Number.isFinite(result?.duration) ? duration(result.duration) : '—'}</dd></div>
         <div><dt>Tempo registrado</dt><dd>${Number.isFinite(state?.observedSeconds) ? duration(state.observedSeconds) : '—'}</dd></div></dl>`;
     }
-    get('.rm-breakdown').hidden = !result;
+    get('.rm-breakdown').hidden = !canEdit() || !result;
     get('.rm-results').innerHTML = result ? distances.map(row =>
       `<li><strong>${h(row.point.name)}</strong><span>Trecho ${km(row.leg)} · Acumulado ${km(row.accumulated)}</span>
         ${row.remaining.map(school => `<span>Até ${h(school.name)} · ${km(school.distance)}</span>`).join('')}</li>`).join('') : '';
@@ -811,7 +852,7 @@ export function mountRouteMap(root, initialData, workspace, {
       const L = await leaflet();
       if (disposed || !root.isConnected) return;
       map = L.map(get('.rm-canvas'), {
-        scrollWheelZoom: false, zoomControl: false, zoomAnimation: false,
+        scrollWheelZoom: true, zoomControl: false, zoomAnimation: false,
         fadeAnimation: false, markerZoomAnimation: false, attributionControl: false,
       }).setView(center, urbanZoom);
       L.control.zoom({ position: 'topright', zoomInTitle: 'Aproximar', zoomOutTitle: 'Afastar' }).addTo(map);
@@ -843,12 +884,12 @@ export function mountRouteMap(root, initialData, workspace, {
   }
 
   root.innerHTML = `
-    <div class="rm-layout">
+    <div class="rm-layout${canEdit() ? '' : ' rm-consultation'}${monitor ? ' rm-operational' : ''}">
       <section class="rm-map-area" aria-label="Mapa de Carbonita">
         <div class="rm-canvas" tabindex="0" role="region" aria-label="Mapa interativo. Use as setas para mover e mais ou menos para ajustar o zoom."></div>
         <div class="rm-map-buttons">
           <button type="button" data-rm="fit" aria-label="Enquadrar percurso" title="Enquadrar percurso">${mapIcon('fit')}</button>
-          <button type="button" data-rm="fullscreen" aria-pressed="false" aria-label="Tela cheia" title="Tela cheia">${mapIcon('fullscreen')}</button>
+          <button type="button" data-rm="fullscreen" aria-pressed="false" aria-label="Tela cheia" title="Tela cheia" ${monitor ? 'hidden' : ''}>${mapIcon('fullscreen')}</button>
           <button type="button" data-rm="my-position" aria-label="Minha localização no mapa" title="Minha localização no mapa">${mapIcon('location')}</button>
         </div>
         <p class="rm-tile-status" role="status"></p>
@@ -862,29 +903,29 @@ export function mountRouteMap(root, initialData, workspace, {
           ${mapIcon('chevron')}
         </button>
         <div id="rm-controls" class="rm-fold"><div class="rm-inner"><div class="rm-controls">
-          <div class="rm-selection"><div class="rm-filters">
+          <div class="rm-selection"><strong class="rm-current-route" hidden></strong><div class="rm-filters">
             <label>Escola<select data-rm-school></select></label>
             <label>Rota<select data-rm-route></select></label>
           </div>
           <div class="rm-directions" role="group" aria-label="Sentido">
-            <button type="button" class="btn" data-rm-direction="out">Ida</button>
-            <button type="button" class="btn" data-rm-direction="back">Volta</button>
+            <button type="button" class="btn" data-rm-direction="out">${directions.out}</button>
+            <button type="button" class="btn" data-rm-direction="back">${directions.back}</button>
           </div></div>
           <div class="rm-legend" aria-label="Legenda"></div>
-          <div class="rm-state-row"><span class="rm-state" role="status"></span><small class="rm-scope"></small></div>
-          <small class="rm-revision"></small>
-          <button type="button" class="btn" data-rm="load" ${gateway ? '' : 'hidden'}>Atualizar percurso</button>
+          <div class="rm-technical"><div class="rm-state-row"><span class="rm-state" role="status"></span><small class="rm-scope"></small></div>
+          <small class="rm-revision"></small></div>
+          <p class="rm-status" role="status"></p>
+          <div class="rm-consultation-summary" aria-label="Resumo da rota"></div>
+          <div class="rm-actions rm-primary-actions">
+          <button type="button" class="btn" data-rm="pick" hidden>Marcar no mapa</button>
           <button type="button" class="btn primary" data-rm="calculate">Calcular trajeto</button>
           <button type="button" class="btn" data-rm="retry" hidden>Tentar carregar mapa</button>
-          <small class="rm-provider"></small>
-          <details class="rm-routing-help">
-            <summary>Cálculo no editor administrativo local</summary>
-            <ol><li>Inicie o OSRM institucional e abra o editor administrativo local.</li>
-              <li>Selecione a mesma rota, escola e sentido.</li>
-              <li>Calcule, confira as ruas e salve o percurso no editor.</li></ol>
-            <p>O cálculo exige o editor local. Use Atualizar percurso para consultar aqui a versão salva.</p>
-          </details>
-          <p class="rm-status" role="status"></p>
+          </div>
+          <div class="rm-persistence">
+            <button type="button" class="btn" data-rm="persist">Salvar revisão</button>
+            <label><input type="checkbox" name="verified"> Conferi a sequência e as vias com a equipe</label>
+            <button type="button" class="btn primary" data-rm="validate">Validar e salvar</button>
+          </div>
           <details class="rm-preview" open>
             <summary><span><strong>Resumo do percurso</strong><small class="rm-preview-count"></small></span><span><b class="rm-preview-total"></b>${mapIcon('chevron')}</span></summary>
             <div class="rm-summary" aria-label="Métricas do percurso"></div>
@@ -893,10 +934,23 @@ export function mountRouteMap(root, initialData, workspace, {
           <details class="rm-breakdown" hidden><summary>Distâncias por trecho</summary>
             <ol class="rm-results" aria-label="Distâncias do percurso"></ol>
           </details>
-          <div class="rm-list-heading"><h2>Pontos do percurso</h2><button type="button" class="btn small" data-rm="pick" hidden>Marcar no mapa</button></div>
-          <label class="rm-search">Buscar neste percurso<input type="search" data-rm-search placeholder="Ponto ou escola" autocomplete="off"></label>
+          <section class="rm-point-list">
+          <div class="rm-list-heading"><h2>${canEdit() || monitor ? 'Pontos do percurso' : 'Pontos de embarque'}</h2></div>
+          <label class="rm-search">${canEdit() ? 'Buscar neste percurso' : 'Buscar pontos'}<input type="search" data-rm-search placeholder="${canEdit() ? 'Ponto ou escola' : 'Nome do ponto'}" autocomplete="off"></label>
           <p class="rm-search-count" role="status" hidden></p>
           <ol class="rm-point-rows" aria-label="Sequência do percurso"></ol>
+          </section>
+          <button type="button" class="btn small rm-refresh" data-rm="load" ${gateway ? '' : 'hidden'}>${mapIcon('refresh')}<span>Atualizar percurso</span></button>
+          <details class="rm-advanced"><summary>Configurações avançadas</summary>
+          <div class="rm-advanced-body">
+          <small class="rm-provider"></small>
+          <details class="rm-routing-help">
+            <summary>Cálculo no editor administrativo local</summary>
+            <ol><li>Inicie o OSRM institucional e abra o editor administrativo local.</li>
+              <li>Selecione a mesma rota, escola e sentido.</li>
+              <li>Calcule, confira as ruas e salve o percurso no editor.</li></ol>
+            <p>O cálculo exige o editor local. Use Atualizar percurso para consultar aqui a versão salva.</p>
+          </details>
           <form class="rm-editor">
             <fieldset><legend>Editar item selecionado</legend>
               <div class="rm-actions">
@@ -939,17 +993,15 @@ export function mountRouteMap(root, initialData, workspace, {
               </div>
             </div>
           </section>
-          <div class="rm-persistence">
-            <fieldset><legend>Programação e salvamento</legend>
+          <div class="rm-schedule" ${gateway ? '' : 'hidden'}>
+            <fieldset><legend>Programação do percurso</legend>
               <div class="rm-filters">
                 <label>Viagens por dia neste sentido<input type="number" name="journeys" min="0" max="40" step="1"></label>
                 <label>Tempo registrado (s)<input type="number" name="observed" min="1" max="86400" step="1"></label>
               </div>
-              <button type="button" class="btn" data-rm="persist">Salvar revisão</button>
-              <label><input type="checkbox" name="verified"> Conferi a sequência e as vias com a equipe</label>
-              <button type="button" class="btn primary" data-rm="validate">Validar e salvar</button>
             </fieldset>
           </div>
+          </div></details>
         </div></div></div>
       </aside>
     </div>`;
