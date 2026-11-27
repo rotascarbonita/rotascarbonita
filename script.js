@@ -366,7 +366,7 @@ function syncRouteMap(){
     retry.hidden=true;
     status.textContent='Carregando mapa…';
     try{
-      const module=await import(new URL('route-map.mjs?v=5',assetsBase).href);
+      const module=await import(new URL('route-map.mjs?v=8',assetsBase).href);
       if(routeMapRoot!==root||!root.isConnected)return;
       routeMapWorkspace??=module.createWorkspace();
       routeMapInstance=module.mountRouteMap(root,routeMapData(),routeMapWorkspace,{
@@ -383,7 +383,7 @@ function syncRouteMap(){
   void mount();
 }
 function routeMapScreen(){
-  return hero('Mapa de Rotas','Consulte os pontos de embarque e as escolas vinculados às rotas.')+
+  return '<header class="rm-heading"><h1>Mapa de Rotas</h1><button class="btn small" type="button" data-act="print" aria-label="Imprimir mapa" title="Imprimir mapa">'+icon('print')+' <span>Imprimir</span></button></header>'+
     '<div id="routeMap"><p role="status">Carregando mapa…</p><button class="btn" type="button" hidden>Tentar novamente</button></div>';
 }
 let renderedView='', renderedModalType='', renderedMenu=false, closingDialog=false;

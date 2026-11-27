@@ -4,7 +4,14 @@ const colors = ['#1351b4', '#8c3d0b', '#006b60', '#773c93', '#ad154c', '#355617'
 const distance = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 });
 const updateTime = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo' });
 const km = meters => distance.format(meters / 1000) + ' km';
-const minutes = seconds => Math.ceil(seconds / 60) + ' min';
+function duration(seconds) {
+  const total = Math.round(seconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor(total / 60) % 60;
+  const remainder = total % 60;
+  return [hours && hours + ' h', minutes && minutes + ' min', (remainder || !total) && remainder + ' s']
+    .filter(Boolean).join(' ');
+}
 const urbanZoom = 15;
 const mapIcons = {
   fit: '<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/><circle cx="12" cy="12" r="3"/>',
@@ -56,7 +63,7 @@ function asset(path, type) {
 async function leaflet() {
   library ??= Promise.allSettled([
     asset('./leaflet/leaflet.css', 'link'),
-    asset('./route-map.css?v=4', 'link'),
+    asset('./route-map.css?v=7', 'link'),
     asset('./leaflet/leaflet.js', 'script'),
   ]).then(results => {
     if (results.some(item => item.status === 'rejected') || !window.L) {
@@ -88,6 +95,11 @@ export function mountRouteMap(root, initialData, workspace, {
 } = {}) {
   const events = new AbortController();
   const markers = new Map();
+  const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  const narrow = matchMedia('(max-width: 870px)');
+  const sheetStates = ['collapsed', 'middle', 'expanded'];
+  let sheetIndex = 1, desktopOpen = true, sheetDrag, suppressSheetClick = false;
+  let lastRoad, pinEntrance;
   let locationDot;
   let data = initialData, map, layers, resize, request, disposed = false;
   let routeId = '', schoolId = '', direction = 'out', selected = 0, placing = false;
@@ -251,6 +263,7 @@ export function mountRouteMap(root, initialData, workspace, {
     const list = plan();
     if (!isEditable() || !list[index] || !position) return;
     list[index] = { ...list[index], position };
+    pinEntrance = waypointKey(list[index]);
     const updateCatalogue = gateway && list[index].kind !== 'via' && get('[name="setReference"]').checked;
     save(list);
     if (updateCatalogue) entry().corrections = [...new Set([...(entry().corrections || []), waypointKey(list[index])])];
@@ -272,16 +285,34 @@ export function mountRouteMap(root, initialData, workspace, {
       const bounds = window.L.latLngBounds(list.map(point => point.position));
       road?.geometry.coordinates.forEach(([lng, lat]) => bounds.extend([lat, lng]));
       imported?.track.line.forEach(([lng, lat]) => bounds.extend([lat, lng]));
-      map.fitBounds(bounds, { padding: [44, 44], maxZoom: 16, animate: false });
+      const [topLeft, bottomRight] = mapPadding();
+      map.fitBounds(bounds, { paddingTopLeft: topLeft, paddingBottomRight: bottomRight, maxZoom: 16, animate: false });
     }
   }
 
   function focusMarker(index) {
     const point = plan()[index];
     if (point?.position && map) {
-      map.panTo(point.position, { animate: false });
+      keepMarkerVisible(point.position);
       markers.get(index)?.openPopup();
     }
+  }
+
+  function keepMarkerVisible(position) {
+    const [paddingTopLeft, paddingBottomRight] = mapPadding();
+    map.panInside(position, { paddingTopLeft, paddingBottomRight, animate: false });
+  }
+
+  function mapPadding() {
+    const canvas = get('.rm-canvas');
+    const side = get('.rm-side');
+    const width = canvas.clientWidth, height = canvas.clientHeight;
+    if (expandedMap) return [[24, 64], [24, 24]];
+    if (narrow.matches) {
+      const occupied = canvas.getBoundingClientRect().bottom - side.getBoundingClientRect().top;
+      return [[24, 60], [24, Math.max(24, Math.min(height - 76, occupied + 24))]];
+    }
+    return [[Math.min(width - 52, side.offsetWidth + 38), 66], [24, 28]];
   }
 
   function showLocation() {
@@ -314,6 +345,8 @@ export function mountRouteMap(root, initialData, workspace, {
     distances = result ? legDistances(result.legs, list) : []) {
     if (!map) return;
     const L = window.L;
+    const animateRoad = result && result.geometry !== lastRoad && !result.provider?.startsWith('arquivo-');
+    lastRoad = result?.geometry;
     layers.clearLayers();
     markers.clear();
     const color = colors[data.routes.findIndex(item => item.id === routeId) % colors.length] || colors[0];
@@ -322,8 +355,19 @@ export function mountRouteMap(root, initialData, workspace, {
     }
     if (result) {
       const file = result.provider?.startsWith('arquivo-');
-      L.geoJSON(result.geometry, { style: { color: file ? '#7d286f' : color, weight: 5,
-        opacity: 0.9, dashArray: file ? '8 6' : null }, interactive: false }).addTo(layers);
+      const road = L.geoJSON(result.geometry, { style: { color: file ? '#7d286f' : color, weight: 5,
+        className: 'rm-road-line', opacity: 0.9, dashArray: file ? '8 6' : null }, interactive: false }).addTo(layers);
+      if (animateRoad && !reducedMotion.matches) {
+        requestAnimationFrame(() => road.eachLayer(line => {
+          const path = line.getElement();
+          if (!path?.isConnected || reducedMotion.matches) return;
+          const length = path.getTotalLength();
+          if (!length) return;
+          path.style.setProperty('--rm-path-length', String(length));
+          path.classList.add('rm-road-enter');
+          path.addEventListener('animationend', () => path.classList.remove('rm-road-enter'), { once: true });
+        }));
+      }
     }
     if (imported) L.geoJSON({ type: 'LineString', coordinates: imported.track.line },
       { style: { color: '#7d286f', weight: 4, dashArray: '8 6' }, smoothFactor: 1.5, interactive: false }).addTo(layers);
@@ -337,15 +381,24 @@ export function mountRouteMap(root, initialData, workspace, {
         <strong>${h(point.name)}</strong>
         ${rows.map(school => `<div>Até ${h(school.name)} <b>${km(school.distance)}</b></div>`).join('')}
         ${roadLeg ? `<div>Até o próximo ponto <b>${km(roadLeg.distance)}</b></div>
-          ${Number.isFinite(roadLeg.duration) ? `<div>Tempo estimado do trecho <b>${minutes(roadLeg.duration)}</b></div>` : ''}`
+          ${Number.isFinite(roadLeg.duration) ? `<div>Tempo estimado do trecho <b>${duration(roadLeg.duration)}</b></div>` : ''}`
           : !result ? '<div>Distâncias e tempo ainda indisponíveis.</div>' : ''}`;
       const marker = L.marker(point.position, {
         icon: L.divIcon({ html: pin(point, numbers[index]), className: 'rm-marker', iconSize: [44, 44],
           iconAnchor: point.kind === 'stop' ? [22, 42] : [22, 22], popupAnchor: point.kind === 'stop' ? [0, -39] : [0, -13] }),
         title: point.name, alt: point.name, draggable: isEditable(),
-      }).addTo(layers).bindPopup(popup);
+      }).addTo(layers).bindPopup(popup, { maxWidth: 254, keepInView: false });
+      marker.on('popupopen', ({ popup: panel }) => {
+        const [topLeft, bottomRight] = mapPadding();
+        panel.options.autoPanPaddingTopLeft = topLeft;
+        panel.options.autoPanPaddingBottomRight = bottomRight;
+        panel.update();
+      });
       markers.set(index, marker);
-      marker.getElement()?.setAttribute('aria-label', point.name);
+      const markerElement = marker.getElement();
+      markerElement?.setAttribute('aria-label', point.name);
+      markerElement?.addEventListener('focus', () => keepMarkerVisible(marker.getLatLng()));
+      if (pinEntrance === waypointKey(point)) markerElement?.classList.add('rm-pin-enter');
       marker.on('click', () => { selected = index; render(false); });
       marker.on('dragend', () => {
         const { lat, lng } = marker.getLatLng();
@@ -353,6 +406,7 @@ export function mountRouteMap(root, initialData, workspace, {
         setPosition(coordinates(lat, lng), index);
       });
     }
+    pinEntrance = undefined;
   }
 
   function render(redraw = true) {
@@ -413,6 +467,7 @@ export function mountRouteMap(root, initialData, workspace, {
       <span><strong>${h(item.name)}</strong><small>${pointKinds[item.kind]}${numbers[i] ? ' ' + numbers[i] : ''}
       ${item.position ? '' : ' · <b class="rm-missing">Sem localização</b>'}</small></span></button>
       ${isEditable() ? '<span class="rm-handle" data-rm-handle aria-hidden="true" title="Arraste para reordenar">⠿</span>' : ''}</li>`).join('');
+    filterPoints();
     if (canEdit()) {
       editor.querySelector('fieldset').disabled = !point || !isEditable();
       editor.querySelector('[name="lat"]').value = point?.position?.[0]?.toFixed(6) ?? '';
@@ -436,10 +491,12 @@ export function mountRouteMap(root, initialData, workspace, {
       get('[data-rm="pick"]').disabled = !point || !isEditable();
       get('.rm-canvas').classList.toggle('rm-picking', placing || linkingTrack);
     }
-    get('[data-rm="calculate"]').disabled = !provider || !route() || Boolean(request) || !isEditable();
-    get('.rm-provider').textContent = provider
-      ? provider.label
-      : canEdit() ? 'Para calcular, abra o editor local da Secretaria. Percursos salvos continuam acessíveis.' : '';
+    const calculateButton = get('[data-rm="calculate"]');
+    calculateButton.hidden = !canEdit();
+    calculateButton.disabled = !provider || !route() || Boolean(request) || !isEditable();
+    get('.rm-provider').textContent = provider?.label || '';
+    get('.rm-provider').hidden = !provider;
+    get('.rm-routing-help').hidden = !canEdit();
     get('[data-rm="load"]').disabled = Boolean(persistenceRequest) || !route();
     get('.rm-persistence').hidden = !gateway || !canEdit();
     get('[data-rm="undo"]').disabled = !isEditable() || !undo.get(key())?.length;
@@ -447,14 +504,38 @@ export function mountRouteMap(root, initialData, workspace, {
     get('[name="journeys"]').value = state?.journeys ?? 1;
     get('[name="observed"]').value = state?.observedSeconds ?? '';
     get('[data-rm="validate"]').disabled = !state?.road || !get('[name="verified"]').checked;
-    get('.rm-state').textContent = !gateway ? '' : state
-      ? [stateLabels[state.status], canEdit() ? (scope() ? 'Versão da escola selecionada' : 'Versão geral') : '',
+    const badge = get('.rm-state');
+    const status = state?.status || (result ? 'calculated' : 'draft');
+    if (badge.dataset.state !== status) {
+      badge.dataset.state = status;
+      badge.textContent = stateLabels[status];
+    }
+    get('.rm-scope').textContent = state
+      ? [canEdit() ? (scope() ? 'Versão da escola selecionada' : 'Versão geral') : '',
         workspace.pending.has(key()) ? 'Alterações locais' : ''].filter(Boolean).join(' · ') : '';
     const timestamp = new Date(state?.plan?.updatedAt);
     get('.rm-revision').textContent = state?.revision && Number.isFinite(+timestamp)
       ? 'Revisão ' + state.revision + ' · ' + updateTime.format(timestamp) : '';
+    const stops = numbers.filter(Boolean).length;
+    const schools = list.filter(item => item.kind === 'school');
+    get('.rm-preview-count').textContent = `${stops} ${stops === 1 ? 'embarque' : 'embarques'} · ${schools.length} ${schools.length === 1 ? 'escola' : 'escolas'}`;
+    const routeName = route()?.name;
+    get('.rm-sheet-route').textContent = routeName ? routeName + ' · ' + (direction === 'out' ? 'Ida' : 'Volta') : 'Nenhuma rota disponível';
+    const sheetCounts = get('.rm-sheet-counts');
+    sheetCounts.textContent = routeName ? get('.rm-preview-count').textContent : '';
+    const sheetSchools = get('.rm-sheet-schools');
+    sheetSchools.textContent = schools.map(item => item.name).join(' · ');
+    sheetSchools.title = sheetSchools.textContent;
+    get('.rm-sheet-metrics').textContent = result ? [
+      Number.isFinite(result.distance) && km(result.distance),
+      Number.isFinite(result.duration) && duration(result.duration),
+    ].filter(Boolean).join(' · ') : '';
+    get('.rm-preview-total').textContent = result ? km(result.distance) : '—';
+    const destinations = get('.rm-preview-schools');
+    destinations.hidden = !schools.length;
+    destinations.textContent = schools.map(item => item.name).join(' · ');
     get('.rm-summary').innerHTML = result
-      ? `<strong>${km(result.distance)}</strong> · ${Math.ceil(result.duration / 60)} min estimados<br>
+      ? `<strong>${km(result.distance)}</strong> · ${Number.isFinite(result.duration) ? duration(result.duration) + ' estimados' : 'Tempo indisponível'}<br>
         ${other ? `Ida e volta <strong>${km(result.distance + other.distance)}</strong>` : 'Calcule o outro sentido para ver a quilometragem total.'}`
       : 'Sem trajeto calculado para este sentido.';
     if (gateway) {
@@ -468,8 +549,8 @@ export function mountRouteMap(root, initialData, workspace, {
       get('.rm-summary').innerHTML = `<dl><div><dt>Ida</dt><dd>${item(out)}</dd></div>
         <div><dt>Volta</dt><dd>${item(back)}</dd></div>
         <div><dt>Total diário</dt><dd>${daily}</dd></div>
-        <div><dt>Tempo estimado</dt><dd>${Number.isFinite(result?.duration) ? minutes(result.duration) : '—'}</dd></div>
-        <div><dt>Tempo registrado</dt><dd>${state?.observedSeconds ? state.observedSeconds + ' s' : '—'}</dd></div></dl>`;
+        <div><dt>Tempo estimado</dt><dd>${Number.isFinite(result?.duration) ? duration(result.duration) : '—'}</dd></div>
+        <div><dt>Tempo registrado</dt><dd>${Number.isFinite(state?.observedSeconds) ? duration(state.observedSeconds) : '—'}</dd></div></dl>`;
     }
     get('.rm-breakdown').hidden = !result;
     get('.rm-results').innerHTML = result ? distances.map(row =>
@@ -477,6 +558,7 @@ export function mountRouteMap(root, initialData, workspace, {
         ${row.remaining.map(school => `<span>Até ${h(school.name)} · ${km(school.distance)}</span>`).join('')}</li>`).join('') : '';
     if (redraw) draw(list, result, numbers, distances);
     for (const [index, marker] of markers) marker.getElement()?.classList.toggle('rm-marker-selected', index === selected);
+    syncDisclosure();
   }
 
   async function calculate() {
@@ -566,6 +648,11 @@ export function mountRouteMap(root, initialData, workspace, {
       linkingTrack = false;
       placing = !placing;
       render(false);
+      if (placing && narrow.matches) {
+        setPanel(0);
+        get('.rm-canvas').focus({ preventScroll: true });
+      }
+      get('.rm-map-feedback').textContent = placing ? 'Toque no mapa para marcar a localização.' : '';
       tell(placing ? 'Clique no mapa para posicionar o item selecionado.' : 'Posicionamento cancelado.');
     },
     locate() {
@@ -675,7 +762,15 @@ export function mountRouteMap(root, initialData, workspace, {
 
   function setExpanded(expanded) {
     expandedMap = expanded;
-    get('.rm-map-area').classList.toggle('rm-expanded', expanded);
+    const area = get('.rm-map-area');
+    area.classList.toggle('rm-expanded', expanded);
+    if (!reducedMotion.matches) {
+      area.getAnimations().filter(animation => animation.id === 'rm-fullscreen').forEach(animation => animation.cancel());
+      const transition = area.animate({ opacity: [expanded ? .8 : .9, 1] }, {
+        duration: expanded ? 250 : 150, easing: 'cubic-bezier(.22, 1, .36, 1)',
+      });
+      transition.id = 'rm-fullscreen';
+    }
     const button = get('[data-rm="fullscreen"]');
     button.setAttribute('aria-pressed', String(expanded));
     const label = expanded ? 'Sair da tela cheia' : 'Tela cheia';
@@ -702,6 +797,7 @@ export function mountRouteMap(root, initialData, workspace, {
     placing = false;
     imported = importing = undefined;
     linkingTrack = false;
+    lastRoad = undefined;
     get('[name="verified"]').checked = false;
     tell('');
     render();
@@ -719,8 +815,9 @@ export function mountRouteMap(root, initialData, workspace, {
         fadeAnimation: false, markerZoomAnimation: false, attributionControl: false,
       }).setView(center, urbanZoom);
       L.control.zoom({ position: 'topright', zoomInTitle: 'Aproximar', zoomOutTitle: 'Afastar' }).addTo(map);
-      L.control.attribution({ prefix: false }).addTo(map);
-      L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(map);
+      const attribution = L.control.attribution({ prefix: false }).addTo(map);
+      const scale = L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(map);
+      get('.rm-credits').append(scale.getContainer(), attribution.getContainer());
       const tileLayer = L.tileLayer(tiles.url, { attribution: tiles.attribution, maxZoom: 19, minZoom: 3,
         referrerPolicy: 'strict-origin-when-cross-origin' }).addTo(map);
       tileLayer.on('tileerror', () => {
@@ -731,9 +828,12 @@ export function mountRouteMap(root, initialData, workspace, {
       map.on('click', ({ latlng }) => {
         const position = coordinates(latlng.lat, latlng.lng);
         if (linkingTrack) associate(position);
-        else if (placing) setPosition(position);
+        else if (placing) {
+          setPosition(position);
+          get('.rm-map-feedback').textContent = 'Localização atualizada no rascunho.';
+        }
       });
-      resize = new ResizeObserver(() => map?.invalidateSize({ pan: false }));
+      resize = new ResizeObserver(() => map?.invalidateSize({ debounceMoveend: true }));
       resize.observe(get('.rm-canvas'));
       draw();
       fit();
@@ -751,12 +851,16 @@ export function mountRouteMap(root, initialData, workspace, {
           <button type="button" data-rm="fullscreen" aria-pressed="false" aria-label="Tela cheia" title="Tela cheia">${mapIcon('fullscreen')}</button>
           <button type="button" data-rm="my-position" aria-label="Minha localização no mapa" title="Minha localização no mapa">${mapIcon('location')}</button>
         </div>
-        <div class="rm-legend" aria-label="Legenda"></div>
         <p class="rm-tile-status" role="status"></p>
         <p class="rm-map-feedback" role="status"></p>
+        <div class="rm-credits" aria-label="Escala e atribuição cartográfica"></div>
       </section>
       <aside class="rm-side" aria-label="Rotas e pontos">
-        <button type="button" class="rm-disclosure" aria-expanded="true" aria-controls="rm-controls" aria-label="Rotas e pontos"><span>Rotas e pontos</span>${mapIcon('chevron')}</button>
+        <button type="button" class="rm-disclosure" aria-expanded="true" aria-controls="rm-controls">
+          <span class="rm-panel-title">Rotas e pontos</span>
+          <span class="rm-sheet-summary"><strong class="rm-sheet-route"></strong><small class="rm-sheet-counts"></small><small class="rm-sheet-schools"></small><small class="rm-sheet-metrics"></small></span>
+          ${mapIcon('chevron')}
+        </button>
         <div id="rm-controls" class="rm-fold"><div class="rm-inner"><div class="rm-controls">
           <div class="rm-selection"><div class="rm-filters">
             <label>Escola<select data-rm-school></select></label>
@@ -766,18 +870,32 @@ export function mountRouteMap(root, initialData, workspace, {
             <button type="button" class="btn" data-rm-direction="out">Ida</button>
             <button type="button" class="btn" data-rm-direction="back">Volta</button>
           </div></div>
-          <p class="rm-state" role="status"></p>
+          <div class="rm-legend" aria-label="Legenda"></div>
+          <div class="rm-state-row"><span class="rm-state" role="status"></span><small class="rm-scope"></small></div>
           <small class="rm-revision"></small>
-          <button type="button" class="btn" data-rm="load" ${gateway ? '' : 'hidden'}>Reler percurso salvo</button>
+          <button type="button" class="btn" data-rm="load" ${gateway ? '' : 'hidden'}>Atualizar percurso</button>
           <button type="button" class="btn primary" data-rm="calculate">Calcular trajeto</button>
           <button type="button" class="btn" data-rm="retry" hidden>Tentar carregar mapa</button>
           <small class="rm-provider"></small>
+          <details class="rm-routing-help">
+            <summary>Cálculo no editor administrativo local</summary>
+            <ol><li>Inicie o OSRM institucional e abra o editor administrativo local.</li>
+              <li>Selecione a mesma rota, escola e sentido.</li>
+              <li>Calcule, confira as ruas e salve o percurso no editor.</li></ol>
+            <p>O cálculo exige o editor local. Use Atualizar percurso para consultar aqui a versão salva.</p>
+          </details>
           <p class="rm-status" role="status"></p>
-          <div class="rm-summary" aria-label="Métricas do percurso"></div>
+          <details class="rm-preview" open>
+            <summary><span><strong>Resumo do percurso</strong><small class="rm-preview-count"></small></span><span><b class="rm-preview-total"></b>${mapIcon('chevron')}</span></summary>
+            <div class="rm-summary" aria-label="Métricas do percurso"></div>
+            <p class="rm-preview-schools" aria-label="Escolas atendidas" hidden></p>
+          </details>
           <details class="rm-breakdown" hidden><summary>Distâncias por trecho</summary>
             <ol class="rm-results" aria-label="Distâncias do percurso"></ol>
           </details>
           <div class="rm-list-heading"><h2>Pontos do percurso</h2><button type="button" class="btn small" data-rm="pick" hidden>Marcar no mapa</button></div>
+          <label class="rm-search">Buscar neste percurso<input type="search" data-rm-search placeholder="Ponto ou escola" autocomplete="off"></label>
+          <p class="rm-search-count" role="status" hidden></p>
           <ol class="rm-point-rows" aria-label="Sequência do percurso"></ol>
           <form class="rm-editor">
             <fieldset><legend>Editar item selecionado</legend>
@@ -857,24 +975,61 @@ export function mountRouteMap(root, initialData, workspace, {
       (event.shiftKey ? last : first).focus();
     }
   }, { signal: events.signal });
+  function filterPoints() {
+    const normalize = text => text.normalize('NFD').replace(/\p{M}/gu, '').toLocaleLowerCase('pt-BR');
+    const query = normalize(get('[data-rm-search]').value.trim());
+    let visible = 0;
+    for (const row of get('.rm-point-rows').children) {
+      row.hidden = !normalize(row.querySelector('strong').textContent).includes(query);
+      if (!row.hidden) visible++;
+    }
+    const feedback = get('.rm-search-count');
+    feedback.hidden = !query;
+    feedback.textContent = visible ? `${visible} ${visible === 1 ? 'resultado' : 'resultados'}` : 'Nenhum ponto ou escola encontrado neste percurso.';
+  }
+
+  function setPanel(index) {
+    if (narrow.matches) sheetIndex = Math.max(0, Math.min(2, index));
+    else desktopOpen = Boolean(index);
+    syncDisclosure();
+  }
+
   function syncDisclosure() {
     const button = get('.rm-disclosure'), panel = get('.rm-inner');
-    const collapsed = button.getAttribute('aria-expanded') === 'false';
-    if (collapsed && panel.contains(document.activeElement)) button.focus();
+    const index = narrow.matches ? sheetIndex : desktopOpen ? 2 : 0;
+    const collapsed = index === 0;
+    get('.rm-side').dataset.panel = sheetStates[index];
+    const label = collapsed ? 'Abrir painel de rotas e pontos' : index === 1
+      ? 'Expandir painel de rotas e pontos' : 'Recolher painel de rotas e pontos';
+    button.setAttribute('aria-expanded', String(!collapsed));
+    button.setAttribute('aria-label', collapsed && narrow.matches
+      ? [label, ...Array.from(button.querySelector('.rm-sheet-summary').children, item => item.textContent)].filter(Boolean).join('. ')
+      : label);
+    button.title = label;
+    if (collapsed && panel.contains(document.activeElement)) button.focus({ preventScroll: true });
     panel.inert = collapsed;
   }
+  narrow.addEventListener('change', syncDisclosure, { signal: events.signal });
+  register('input', event => { if (event.target.matches('[data-rm-search]')) filterPoints(); });
+  register('keydown', event => {
+    if (!narrow.matches || !event.target.matches('.rm-disclosure')) return;
+    const index = { ArrowUp: sheetIndex + 1, ArrowDown: sheetIndex - 1, Home: 0, End: 2 }[event.key];
+    if (index === undefined) return;
+    event.preventDefault();
+    setPanel(index);
+  });
   register('click', event => {
     const button = event.target.closest('button');
     if (!button) return;
     if (button.matches('.rm-disclosure')) {
-      const expanded = button.getAttribute('aria-expanded') === 'true';
-      button.setAttribute('aria-expanded', String(!expanded));
-      syncDisclosure();
+      if (suppressSheetClick && event.detail) return;
+      setPanel(narrow.matches ? (sheetIndex + 1) % sheetStates.length : Number(!desktopOpen));
     } else if (button.dataset.rmDirection && direction !== button.dataset.rmDirection) {
       direction = button.dataset.rmDirection;
       reloadSelection();
     } else if (button.dataset.rmIndex !== undefined) {
       selected = Number(button.dataset.rmIndex); placing = false;
+      if (narrow.matches && sheetIndex === 2 && plan()[selected]?.position) setPanel(1);
       render(false);
       get('[data-rm-index="' + selected + '"]')?.focus();
       focusMarker(selected);
@@ -883,6 +1038,17 @@ export function mountRouteMap(root, initialData, workspace, {
     } else if (isEditable() || ['fit', 'fullscreen', 'load', 'my-position'].includes(button.dataset.rm)) {
       actions[button.dataset.rm]?.();
     }
+  });
+  register('transitionend', event => {
+    if (!event.target.matches('.rm-side') || event.propertyName !== 'height') return;
+    const marker = markers.get(selected);
+    const popup = marker?.getPopup();
+    if (!popup?.isOpen()) return;
+    keepMarkerVisible(marker.getLatLng());
+    const [topLeft, bottomRight] = mapPadding();
+    popup.options.autoPanPaddingTopLeft = topLeft;
+    popup.options.autoPanPaddingBottomRight = bottomRight;
+    popup.update();
   });
   register('change', event => {
     const field = event.target;
@@ -926,6 +1092,14 @@ export function mountRouteMap(root, initialData, workspace, {
     reloadSelection();
   });
   register('pointerdown', event => {
+    const disclosure = event.target.closest('.rm-disclosure');
+    if (narrow.matches && disclosure && event.isPrimary && event.button === 0) {
+      suppressSheetClick = false;
+      const side = get('.rm-side');
+      sheetDrag = { id: event.pointerId, start: event.clientY, height: side.offsetHeight };
+      disclosure.setPointerCapture(event.pointerId);
+      return;
+    }
     const handle = event.target.closest('[data-rm-handle]');
     if (!handle || drag || !isEditable() || event.button !== 0) return;
     const row = handle.closest('[data-rm-row]');
@@ -935,6 +1109,13 @@ export function mountRouteMap(root, initialData, workspace, {
     event.preventDefault();
   });
   register('pointermove', event => {
+    if (sheetDrag?.id === event.pointerId) {
+      const delta = sheetDrag.start - event.clientY;
+      if (Math.abs(delta) < 8 && !suppressSheetClick) return;
+      suppressSheetClick = true;
+      get('.rm-side').style.setProperty('--rm-drag-height', `${sheetDrag.height + delta}px`);
+      return;
+    }
     if (drag?.id !== event.pointerId) return;
     const row = document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-rm-row]');
     if (!row || !root.contains(row) || row === drag.target) return;
@@ -943,6 +1124,15 @@ export function mountRouteMap(root, initialData, workspace, {
     row.classList.add('rm-drop-target');
   });
   function endDrag(event) {
+    if (sheetDrag?.id === event.pointerId) {
+      const delta = sheetDrag.start - event.clientY;
+      sheetDrag = undefined;
+      get('.rm-side').style.removeProperty('--rm-drag-height');
+      if (event.type === 'pointerup' && Math.abs(delta) >= 32) {
+        setPanel(sheetIndex + Math.sign(delta));
+      }
+      return;
+    }
     if (drag?.id !== event.pointerId) return;
     const { row, target, from } = drag;
     const to = Number(target.dataset.rmRow);
