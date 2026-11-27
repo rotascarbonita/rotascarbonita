@@ -42,7 +42,8 @@ async function createBackend(url, publicKey) {
     await client.auth.signOut({ scope: 'local' });
     session = null;
   }
-  let channel;
+  let channel, channelEpoch, sessionEpoch = 0;
+  let channelQueue = Promise.resolve();
   const emit = name => window.dispatchEvent(new Event(name));
   const errorMessage = error => {
     if (/Invalid login credentials/i.test(error?.message || '')) return 'E-mail ou senha incorretos.';
@@ -51,20 +52,54 @@ async function createBackend(url, publicKey) {
     if (/JWT expired|refresh token|not authenticated/i.test(error?.message || '')) return 'Sessão expirada. Entre novamente.';
     return error?.message || 'Não foi possível concluir. Tente novamente.';
   };
-  async function rpc(action, payload = {}) {
-    const { data, error } = await client.rpc('rotas_api', { action, payload }).abortSignal(AbortSignal.timeout(action === 'importStudents' ? 45000 : 20000));
+  async function rpc(action, payload = {}, signal) {
+    const timeout = AbortSignal.timeout(action === 'importStudents' ? 45000 : 20000);
+    const requestSignal = signal && typeof AbortSignal.any === 'function' ? AbortSignal.any([signal, timeout]) : timeout;
+    const { data, error } = await client.rpc('rotas_api', { action, payload }).abortSignal(requestSignal);
     if (error) throw Object.assign(Error(errorMessage(error)), { code: error.code });
     return data;
   }
-  async function watch() {
-    if (channel) { await client.removeChannel(channel); channel = undefined; }
-    if (!session) return;
-    channel = client.channel('rotas-sync').on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'sync_state' }, () => emit('rotas:changed')).subscribe();
+  async function syncChannel() {
+    if (channel && session && channelEpoch === sessionEpoch) return;
+    if (channel) {
+      const previous = channel;
+      channel = undefined;
+      await client.removeChannel(previous);
+    }
+    // The SDK closes the transport asynchronously when its last channel is removed.
+    while (session && client.realtime?.isDisconnecting()) {
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    const owner = session?.user?.id;
+    if (!owner) return;
+    const epoch = sessionEpoch;
+    const next = client.channel('rotas-sync');
+    channel = next;
+    channelEpoch = epoch;
+    const isCurrent = () => channel === next && sessionEpoch === epoch;
+    let needsCatchUp = false;
+    next.on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'sync_state' }, () => {
+      if (isCurrent()) emit('rotas:changed');
+    }).subscribe(status => {
+      if (!isCurrent()) return;
+      if (status !== 'SUBSCRIBED') { needsCatchUp = true; return; }
+      if (needsCatchUp) emit('rotas:changed');
+      needsCatchUp = true;
+    });
+  }
+  function watch() {
+    channelQueue = channelQueue.catch(() => {}).then(syncChannel);
+    return channelQueue;
   }
   client.auth.onAuthStateChange((event, nextSession) => {
+    if (event === 'SIGNED_OUT' || session?.user?.id !== nextSession?.user?.id) sessionEpoch++;
     if (nextSession && !emailSession(nextSession)) {
+      sessionEpoch++;
       session = null;
-      setTimeout(() => client.auth.signOut({ scope: 'local' }).catch(() => {}), 0);
+      setTimeout(() => {
+        void watch().catch(() => {});
+        void client.auth.signOut({ scope: 'local' }).catch(() => {});
+      }, 0);
       emit('rotas:signed-out');
       return;
     }
@@ -80,7 +115,7 @@ async function createBackend(url, publicKey) {
     if (data?.error) throw Error(data.error);
     return data;
   }
-  async function api(action, data = {}) {
+  async function api(action, data = {}, signal) {
     if (action === 'login') {
       const { data: signedIn, error } = await client.auth.signInWithPassword({ email: loginEmail(data.email), password: data.password });
       if (error) throw Error(errorMessage(error));
@@ -100,6 +135,7 @@ async function createBackend(url, publicKey) {
     if (action === 'logout') {
       const { error } = await client.auth.signOut({ scope: 'local' });
       if (error) throw Error(errorMessage(error));
+      await watch();
       return { success: true };
     }
     if (action === 'changePassword') {
@@ -127,7 +163,7 @@ async function createBackend(url, publicKey) {
       result.counts.usersCreated = created;
       return result;
     }
-    return rpc(action, data);
+    return rpc(action, data, signal);
   }
   async function mapApi(action, payload, signal) {
     const controller = new AbortController();
@@ -233,6 +269,14 @@ const DIRECTION={IDA:'Para Escola',VOLTA:'Para Casa'};
 const STUDENT_SHIFTS=[['MANHA','Manhã'],['TARDE','Tarde']];
 const isActive=x=>x&&x.ativo!==false&&x.ativo!=='false'&&x.ativo!=='NAO';
 let loadRequest=0;
+let snapshotController, updatesController, refreshQueued=false;
+function cancelSyncRequests(){
+  snapshotController?.abort();
+  updatesController?.abort();
+  snapshotController=updatesController=undefined;
+  refreshQueued=false;
+  S.checking=false;
+}
 const LOAD_FEEDBACK_DELAY=300;
 function hasSnapshot(){
   return Boolean(S.data?.year!=null&&String(S.data.year)===String(S.year)&&S.data.day===S.day);
@@ -250,12 +294,15 @@ function timeHuman(s){
   const date=new Date(s);
   return s&&!isNaN(date.getTime())?new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',hour:'2-digit',minute:'2-digit'}).format(date):'';
 }
-function api(action,data={}){return window.rotasBackend.api(action,data);}
+function api(action,data={},signal){return window.rotasBackend.api(action,data,signal);}
 function message(text,isError=false){const wrap=$('toast');if(!wrap)return;const t=document.createElement('div');t.className='toast'+(isError?' error':'');t.textContent=text;wrap.append(t);setTimeout(()=>t.remove(),4500);}
 function sessionEnded(msg){return /Sessão expirada|Sessão inválida|Usuário (?:desativado|inativo)|usuário inativo/i.test(msg);}
-function warn(e){const msg=e&&e.message||String(e);message(msg,true);if(sessionEnded(msg)){stopCamera();++loadRequest;S.loading=false;S.loadingVisible=false;S.token='';S.data=null;S.modal=null;STORE.remove('rc_session');render();}}
+function warn(e){const msg=e&&e.message||String(e);message(msg,true);if(sessionEnded(msg))logout();}
 async function load(showFeedback=false){
   if(!S.token)return;
+  cancelSyncRequests();
+  const controller=new AbortController();
+  snapshotController=controller;
   const token=S.token, request=++loadRequest;
   const context={year:S.year||undefined,day:S.day};
   const current=()=>S.token===token&&request===loadRequest;
@@ -271,7 +318,7 @@ async function load(showFeedback=false){
     else if(showFeedback)updateLoadFeedback();
   },LOAD_FEEDBACK_DELAY);
   try{
-    const d=await api('snapshot',context);
+    const d=await api('snapshot',context,controller.signal);
     if(!current())return;
     if(!d?.user)throw Error('O painel não recebeu os dados da sua conta.');
     const reveal=S.loadingVisible&&!hasSnapshot();
@@ -297,25 +344,46 @@ async function load(showFeedback=false){
     }
   }finally{
     clearTimeout(timer);
+    if(snapshotController===controller){
+      snapshotController=undefined;
+      if(refreshQueued)void refresh();
+    }
   }
 }
 async function refresh(){
   if(!S.token||!hasSnapshot()||S.checking||S.busy||S.loading||S.modal||closingDialog||document.hidden)return;
+  refreshQueued=false;
   const {data,token,year,day}=S, request=loadRequest;
   const current=()=>request===loadRequest&&S.data===data&&S.token===token&&S.year===year&&S.day===day;
+  const controller=new AbortController();
+  updatesController=controller;
   S.checking=true;
   try{
-    const x=await api('updates',{version:data.version,year,day});
-    if(current()&&x.changed&&!S.modal&&!closingDialog&&!S.busy&&!S.loading)applySnapshot(x);
+    const x=await api('updates',{version:data.version,year,day},controller.signal);
+    if(current()&&x.changed){
+      if(S.modal||closingDialog||S.busy||S.loading)refreshQueued=true;
+      else applySnapshot(x);
+    }
   }catch(e){
     if(current())warn(e);
   }finally{
-    S.checking=false;
+    if(updatesController===controller){
+      updatesController=undefined;
+      S.checking=false;
+      if(refreshQueued)void refresh();
+    }
   }
 }
 setInterval(refresh,60000);
-window.addEventListener('rotas:changed',refresh);
-window.addEventListener('rotas:signed-out',()=>{if(S.token)logout();});
+function refreshFromSignal(){
+  if(!S.token)return;
+  refreshQueued=true;
+  void refresh();
+}
+window.addEventListener('rotas:changed',refreshFromSignal);
+window.addEventListener('online',refreshFromSignal);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&refreshQueued)void refresh();});
+window.addEventListener('rotas:signed-out',()=>{if(S.token)logout(false);});
 function user(){return S.data&&S.data.user||null;}
 function role(){return user()&&user().perfil||'';}
 function canEdit(){return role()==='secretaria'||role()==='escola';}
@@ -1740,6 +1808,7 @@ async function closeModal(){
   if(!m||m.mandatory||(m.pending&&m.type!=='scanner')||S.busy)return;
   await dismissDialog();
   render();
+  if(refreshQueued)void refresh();
   if (m.returnAction) {
     const trigger = Array.from(document.querySelectorAll('[data-act][data-type]')).find(button =>
       button.dataset.act === m.returnAction && button.dataset.type === m.type &&
@@ -1766,13 +1835,14 @@ async function closeModal(){
 }
 async function changePassword(form){const d=formData(form);if(d.next!==d.confirm){message('A confirmação não corresponde à nova senha.',true);return;}
   if(S.busy)return;S.busy=true;try{const r=await api('changePassword',d);if(S.data)S.data.user=r.user;if(S.modal)await dismissDialog();S.busy=false;await load(true);message('Sua senha foi atualizada.');}catch(e){S.busy=false;warn(e);render();}}
-function logout(){
+function logout(signOut=true){
   stopCamera();
-  api('logout').catch(()=>{});
+  cancelSyncRequests();
   ++loadRequest;
   S.token='';S.data=null;S.modal=null;S.loading=false;S.loadingVisible=false;S.loadError='';S.menu=false;S.callSchool='';S.callStop='';
   STORE.remove('rc_session');
   render();
+  if(signOut)api('logout').catch(()=>{});
 }
 function canUseLiveCamera(view=window){
   const policy=view.document.permissionsPolicy||view.document.featurePolicy;
